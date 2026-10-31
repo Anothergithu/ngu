@@ -16,12 +16,16 @@ import com.gaspoweredcake.client33.systems.modules.Module;
 import com.gaspoweredcake.client33.mixininterface.IVec3;
 import com.gaspoweredcake.client33.utils.Utils;
 import com.gaspoweredcake.client33.utils.entity.EntityUtils;
+import com.gaspoweredcake.client33.utils.movement.FlightGradient;
+import com.gaspoweredcake.client33.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.entity.MoverType;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Flight extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -47,6 +51,27 @@ public class Flight extends Module {
         .min(0.0)
         .build()
     );
+
+    private final SettingGroup sgPacketGlide = settings.createGroup("Packet Glide");
+    private final Setting<Double> acceleration = sgPacketGlide.add(new DoubleSetting.Builder()
+        .name("acceleration").description("Maximum change to each velocity component per tick.")
+        .defaultValue(0.08).range(0.001, 2).sliderRange(0.01, 0.5)
+        .visible(() -> mode.get() == Mode.PacketGlide).build());
+    private final Setting<Double> horizontalCap = sgPacketGlide.add(new DoubleSetting.Builder()
+        .name("speed-cap").description("Maximum horizontal velocity in blocks per tick; server limits vary.")
+        .defaultValue(1.0).range(0.01, 1.59).sliderRange(0.01, 1.59)
+        .visible(() -> mode.get() == Mode.PacketGlide).build());
+    private final Setting<Double> verticalCap = sgPacketGlide.add(new DoubleSetting.Builder()
+        .name("vertical-speed-cap").description("Maximum upward or downward velocity in blocks per tick; server limits vary.")
+        .defaultValue(0.5).range(0.01, 1.59).sliderRange(0.01, 1.0)
+        .visible(() -> mode.get() == Mode.PacketGlide).build());
+    private final Setting<Double> descent = sgPacketGlide.add(new DoubleSetting.Builder()
+        .name("idle-descent").description("Downward velocity when no vertical input is held.")
+        .defaultValue(0.03).range(0, 1).sliderRange(0, 0.2)
+        .visible(() -> mode.get() == Mode.PacketGlide).build());
+    private final Setting<Boolean> stopOnCorrection = sgPacketGlide.add(new BoolSetting.Builder()
+        .name("stop-on-correction").description("Disable Flight when the server sends a position correction.")
+        .defaultValue(true).visible(() -> mode.get() == Mode.PacketGlide).build());
 
     private final Setting<Boolean> verticalSpeedMatch = sgGeneral.add(new BoolSetting.Builder()
         .name("vertical-speed-match")
@@ -106,6 +131,9 @@ public class Flight extends Module {
     private boolean savedAllowFlying;
     private boolean savedFlying;
     private float savedFlySpeed;
+    private Vec3 gradientVelocity = Vec3.ZERO;
+    private final AtomicBoolean corrected = new AtomicBoolean();
+    private boolean sendingGlidePacket;
 
     public Flight() {
         super(Categories.Movement, "flight", "Fly with server abilities or direct movement control.");
@@ -126,14 +154,26 @@ public class Flight extends Module {
     public void onDeactivate() {
         if (Utils.canUpdate()) restoreAbilities();
         savedAbilities = false;
+        gradientVelocity = Vec3.ZERO;
+        corrected.set(false);
     }
 
     @EventHandler
     private void onPreTick(TickEvent.Pre event) {
         if (!Utils.canUpdate()) return;
+        if (mode.get() == Mode.PacketGlide) {
+            if (corrected.getAndSet(false) && stopOnCorrection.get()) { warning("Server position correction; Flight stopped."); disable(); return; }
+            if (mc.player.isPassenger() || !mc.player.isAlive()) { disable(); return; }
+            if (mc.player.isFallFlying()) { gradientVelocity = Vec3.ZERO; return; }
+            Vec3 target = getFlightVelocity();
+            double targetY = target.y == 0 ? -descent.get() : target.y;
+            var next = FlightGradient.next(new FlightGradient.Velocity(gradientVelocity.x, gradientVelocity.y, gradientVelocity.z),
+                new FlightGradient.Velocity(target.x, targetY, target.z), acceleration.get(), horizontalCap.get(), verticalCap.get());
+            gradientVelocity = new Vec3(next.x(), next.y(), next.z());
+        }
         if (!usesAbilities()) {
             mc.player.getAbilities().flying = false;
-            mc.player.setDeltaMovement(getFlightVelocity());
+            mc.player.setDeltaMovement(flightVelocity());
         }
         float currentYaw = mc.player.getYRot();
         if (usesAbilities() && mc.player.fallDistance >= 3f && currentYaw == lastYaw && mc.player.getDeltaMovement().length() < 0.003d) {
@@ -145,7 +185,7 @@ public class Flight extends Module {
 
     @EventHandler
     private void onPostTick(TickEvent.Post event) {
-        if (!Utils.canUpdate()) return;
+        if (!Utils.canUpdate() || packetGlidePaused()) return;
         if (delayLeft > 0) delayLeft--;
 
         if (offLeft <= 0 && delayLeft <= 0) {
@@ -179,17 +219,21 @@ public class Flight extends Module {
         if (usesAbilities()) applyAbilities();
         else {
             mc.player.getAbilities().flying = false;
-            mc.player.setDeltaMovement(getFlightVelocity());
+            mc.player.setDeltaMovement(flightVelocity());
             if (noSneak.get()) mc.player.setOnGround(false);
         }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     private void onPlayerMove(PlayerMoveEvent event) {
-        if (event.type != MoverType.SELF || usesAbilities()) return;
-        Vec3 velocity = getFlightVelocity();
+        if (event.type != MoverType.SELF || usesAbilities() || packetGlidePaused()) return;
+        Vec3 velocity = flightVelocity();
         ((IVec3) event.movement).client33$set(velocity.x, velocity.y, velocity.z);
     }
+
+    private boolean packetGlidePaused() { return mode.get() == Mode.PacketGlide && mc.player != null && mc.player.isFallFlying(); }
+
+    private Vec3 flightVelocity() { return mode.get() == Mode.PacketGlide ? gradientVelocity : getFlightVelocity(); }
 
     private Vec3 getFlightVelocity() {
         boolean keybinds = inputMode.get() == InputMode.Keybinds;
@@ -216,6 +260,8 @@ public class Flight extends Module {
         delayLeft = delay.get();
         offLeft = offTime.get();
         lastPacketY = Double.MAX_VALUE;
+        gradientVelocity = Vec3.ZERO;
+        corrected.set(false);
         flip = false;
         lastYaw = mc.player.getYRot();
     }
@@ -251,8 +297,21 @@ public class Flight extends Module {
      */
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
-        if (!(event.packet instanceof ServerboundMovePlayerPacket packet) || antiKickMode.get() != AntiKickMode.Packet)
+        if (!(event.packet instanceof ServerboundMovePlayerPacket packet) || !Utils.canUpdate()) return;
+        if (mode.get() == Mode.PacketGlide) {
+            if (packetGlidePaused()) return;
+            if (sendingGlidePacket || event.isCancelled() || Modules.get().isActive(Blink.class) || Modules.get().isActive(ChunkProbe.class)) return;
+            var player = mc.player;
+            ServerboundMovePlayerPacket.PosRot rewritten = new ServerboundMovePlayerPacket.PosRot(
+                packet.getX(player.getX()), packet.getY(player.getY()), packet.getZ(player.getZ()),
+                packet.getYRot(player.getYRot()), packet.getXRot(player.getXRot()), packet.isOnGround(), player.horizontalCollision);
+            if (antiKickMode.get() == AntiKickMode.Packet) antiKickPacket(rewritten, packet.getY(player.getY()));
+            event.cancel();
+            sendingGlidePacket = true;
+            try { mc.getConnection().send(rewritten); } finally { sendingGlidePacket = false; }
             return;
+        }
+        if (antiKickMode.get() != AntiKickMode.Packet) return;
 
         double currentY = packet.getY(Double.MAX_VALUE);
         if (currentY != Double.MAX_VALUE) {
@@ -288,6 +347,7 @@ public class Flight extends Module {
 
     @EventHandler
     private void onReceivePacket(PacketEvent.Receive event) {
+        if (event.packet instanceof ClientboundPlayerPositionPacket && mode.get() == Mode.PacketGlide) { corrected.set(true); return; }
         if (!Utils.canUpdate() || !(event.packet instanceof ClientboundPlayerAbilitiesPacket packet)) return;
         if (savedAbilities) {
             savedAllowFlying = packet.canFly();
@@ -313,13 +373,14 @@ public class Flight extends Module {
     }
 
     public boolean noSneak() {
-        return isActive() && !usesAbilities() && noSneak.get();
+        return isActive() && !usesAbilities() && !packetGlidePaused() && noSneak.get();
     }
 
     public enum Mode {
         Auto,
         Abilities,
-        Velocity
+        Velocity,
+        PacketGlide
     }
 
     public enum InputMode {

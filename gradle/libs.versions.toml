@@ -44,6 +44,7 @@ minecraftauth = "5.0.2"
 errorprone = "2.50.0"
 # NullAway (https://github.com/uber/NullAway)
 nullaway = "0.14.0"
+sqlite-jdbc = "3.54.1.0"
 
 [libraries]
 # Fabric base
@@ -70,6 +71,7 @@ waybackauthlib = { module = "de.florianreuth:waybackauthlib", version.ref = "way
 minecraft-auth = { module = "net.raphimc:MinecraftAuth", version.ref = "minecraftauth" }
 errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
 nullaway = { module = "com.uber.nullaway:nullaway", version.ref = "nullaway" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 
 [plugins]
 fabric-loom = { id = "net.fabricmc.fabric-loom", version.ref = "loom" }

@@ -16,11 +16,25 @@ public final class ModuleLogicRegression {
         try { cursor.next(); throw new AssertionError("Exhausted next must throw"); }
         catch (java.util.NoSuchElementException expected) { }
         StorageRegression.run();
+        ChestStealerRegression.run();
+        GuardedActionsRegression.run();
+        BlockLightRegression.run();
+        StoragePillarRegression.run();
+        SpawnerMenuRegression.run();
+        PackedSectionRegression.run();
+        LightFusionRegression.run();
+        SqliteIntelRegression.run();
+        PacketForensicsRegression.run();
+        PositionHistoryRegression.run();
+        SlotDataStoreRegression.run();
+        TranslationGuardRegression.run();
+        FlightGradientRegression.run();
         BlockScanRegression.run();
         LifecycleRegression.run();
         HttpRegression.run();
         PersistenceRegression.run();
         ReconCombatRegression.run();
+        KillAuraRegression.run();
         TickTimer timer = new TickTimer();
         check(timer.ready(), "A newly enabled action must be ready");
         timer.waitTicks(3);
@@ -44,6 +58,12 @@ public final class ModuleLogicRegression {
         check(TickTimer.serverDelay(10, 30, true) == 10, "High TPS must not speed attacks up");
         check(TickTimer.serverDelay(10, 10, false) == 10, "Disabled sync must preserve the delay");
         check(TickTimer.serverDelay(1, 19, true) == 2, "Fractional delays must round up");
+
+        check(com.gaspoweredcake.client33.utils.render.EspLabels.format("Alex", 12L, 17.5f).equals("Alex / 12 m / 17.5 hp"), "ESP labels combine selected fields");
+        check(com.gaspoweredcake.client33.utils.render.EspLabels.format("Alex", null, null).equals("Alex"), "Names work without distance");
+        check(com.gaspoweredcake.client33.utils.render.EspLabels.format(null, 12L, null).equals("12 m"), "Distance works without a name");
+        check(com.gaspoweredcake.client33.utils.render.EspLabels.format(null, null, Float.NaN).isEmpty(), "Invalid health is omitted");
+        check(com.gaspoweredcake.client33.utils.render.EspLabels.format(null, null, -1f).equals("0.0 hp"), "Health labels do not show negative health");
 
         ScreenBounds bounds = new ScreenBounds();
         bounds.reset();

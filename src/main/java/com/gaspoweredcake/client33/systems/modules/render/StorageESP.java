@@ -16,6 +16,7 @@ import com.gaspoweredcake.client33.utils.combat.CombatTelemetry;
 import com.gaspoweredcake.client33.utils.storage.ContainerObservations;
 import com.gaspoweredcake.client33.utils.storage.ContainerSnapshot;
 import com.gaspoweredcake.client33.utils.render.NametagUtils;
+import com.gaspoweredcake.client33.utils.render.StoragePillar;
 import com.gaspoweredcake.client33.utils.render.LabelLayout;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
@@ -77,6 +78,15 @@ public class StorageESP extends Module {
     private final Setting<Boolean> coordinates = sgData.add(new BoolSetting.Builder().name("label-coordinates").description("Add XYZ coordinates to each label; always shown in the inspector.").defaultValue(false).build());
     private final Setting<Integer> contentLines = sgData.add(new IntSetting.Builder().name("content-lines").description("Most numerous item types to list in the inspector.").defaultValue(5).range(1, 12).sliderRange(1, 12).build());
     private final Setting<Double> labelScale = sgVisual.add(new DoubleSetting.Builder().name("label-scale").description("Scale of container labels and inspector text.").defaultValue(0.7).range(0.4, 1.2).sliderRange(0.4, 1.2).build());
+    private final Setting<Boolean> pillars = sgVisual.add(new BoolSetting.Builder().name("vertical-pillars")
+        .description("Draw translucent pillars to build height for loaded storage. Fades from 32 to 128 blocks.")
+        .defaultValue(false).build());
+    private final Setting<Double> pillarWidth = sgVisual.add(new DoubleSetting.Builder().name("pillar-width")
+        .description("Width of storage pillars in blocks.").defaultValue(0.2).range(0.05, 1).sliderRange(0.05, 1)
+        .visible(pillars::get).build());
+    private final Setting<Integer> pillarOpacity = sgVisual.add(new IntSetting.Builder().name("pillar-opacity")
+        .description("Maximum pillar opacity before distance fade and the storage color's opacity.")
+        .defaultValue(48).range(0, 255).sliderRange(0, 128).visible(pillars::get).build());
     private final Setting<Boolean> animate = sgVisual.add(new BoolSetting.Builder().name("animate").description("Animate hologram scan bands and locator rings.").defaultValue(true).build());
     private final Setting<SettingColor> accent = sgVisual.add(new ColorSetting.Builder().name("scan-accent").description("Hologram scan and focused-container accent.").defaultValue(new SettingColor(106, 232, 217, 220)).build());
     private final SettingGroup sgOpened = settings.createGroup("Opened Rendering");
@@ -316,6 +326,7 @@ public class StorageESP extends Module {
         Mode renderMode = mode.get();
 
         if (scanWorld != mc.level) clearCache();
+        if (pillars.get() && pillarOpacity.get() > 0) renderPillars(event);
         for (BlockEntity blockEntity : ordered) {
             if (count >= renderBudget.get()) break;
             BlockPos livePos = blockEntity.getBlockPos();
@@ -408,6 +419,46 @@ public class StorageESP extends Module {
         }
     }
 
+    private void renderPillars(Render3DEvent event) {
+        int drawn = 0;
+        for (BlockEntity blockEntity : ordered) {
+            if (drawn >= renderBudget.get()) break;
+            BlockPos pos = blockEntity.getBlockPos();
+            if (!mc.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)
+                || mc.level.getBlockEntity(pos) != blockEntity || isSecondHalfOfDoubleChest(blockEntity)) continue;
+            var snapshot = observations.snapshot(blockEntity, memorySeconds.get() * 1000L);
+            if (snapshot != null && hideOpened.get()) continue;
+            getBlockEntityColor(blockEntity);
+            if (!render) continue;
+            if (snapshot != null && openedColor.get().a > 0) lineColor.set(openedColor.get());
+            if (renderPillar(event, bounds(blockEntity), lineColor)) drawn++;
+        }
+        if (!vehicles.get()) return;
+        for (var entity : mc.level.entitiesForRendering()) {
+            if (drawn >= renderBudget.get()) break;
+            if (!(entity instanceof ContainerEntity) || !entity.isAlive()) continue;
+            var snapshot = observations.snapshot(entity, memorySeconds.get() * 1000L);
+            if (snapshot != null && hideOpened.get()) continue;
+            Color color = snapshot != null && openedColor.get().a > 0 ? openedColor.get() : other.get();
+            AABB bounds = entity.getBoundingBox().move(Mth.lerp(event.tickDelta, entity.xOld, entity.getX()) - entity.getX(),
+                Mth.lerp(event.tickDelta, entity.yOld, entity.getY()) - entity.getY(), Mth.lerp(event.tickDelta, entity.zOld, entity.getZ()) - entity.getZ());
+            if (renderPillar(event, bounds, color)) drawn++;
+        }
+    }
+
+    private boolean renderPillar(Render3DEvent event, AABB bounds, Color color) {
+        double x = (bounds.minX + bounds.maxX) / 2, z = (bounds.minZ + bounds.maxZ) / 2;
+        double centerY = (bounds.minY + bounds.maxY) / 2;
+        double fade = StoragePillar.opacity(Math.sqrt(PlayerUtils.squaredDistanceToCamera(x, centerY, z)));
+        double top = (double) mc.level.getMaxY() + 1;
+        int alpha = (int) Math.round(color.a * pillarOpacity.get() / 255.0 * fade);
+        if (alpha <= 0 || bounds.maxY >= top) return false;
+        double half = pillarWidth.get() / 2;
+        Color fill = new Color(color).a(alpha);
+        event.renderer.box(x - half, bounds.maxY, z - half, x + half, top, z + half, fill, Color.CLEAR, ShapeMode.Sides, 0);
+        return true;
+    }
+
     private void clearCache() {
         containers.clear(); ordered.clear(); overlays.clear(); observations.clear(); focused = null; scanQueue.clear(); scanTick = 0; scanWorld = mc.level;
     }
@@ -421,7 +472,8 @@ public class StorageESP extends Module {
             || mc.level.getBlockEntity(entry.getKey()) != entry.getValue());
         if (scanQueue.isEmpty()) for (ChunkAccess chunk : Utils.chunks()) {
             double x = chunk.getPos().x() * 16.0 + 8, z = chunk.getPos().z() * 16.0 + 8;
-            if (maxDistance.get() == 0 || PlayerUtils.squaredDistanceToCamera(x, mc.player.getY(), z) <= Math.pow(maxDistance.get() + 24, 2)) scanQueue.addLast(chunk);
+            int scanDistance = maxDistance.get() == 0 ? 0 : Math.max(maxDistance.get(), pillars.get() ? 128 : 0);
+            if (scanDistance == 0 || PlayerUtils.squaredDistanceToCamera(x, mc.player.getY(), z) <= Math.pow(scanDistance + 24, 2)) scanQueue.addLast(chunk);
         }
         for (int i = 0; i < chunksPerTick.get() && !scanQueue.isEmpty(); i++) {
             ChunkAccess chunk = scanQueue.removeFirst();

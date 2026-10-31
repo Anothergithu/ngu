@@ -9,6 +9,7 @@ import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.buffers.Std140SizeCalculator;
 import com.mojang.blaze3d.platform.TextureUtil;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.gaspoweredcake.client33.Client33;
 import com.gaspoweredcake.client33.events.game.ResourcePacksReloadedEvent;
@@ -87,7 +88,23 @@ public class ChamsShader extends EntityShader {
     }
 
     @Override
+    protected RenderPipeline pipeline() {
+        return chams.shader.get() == Chams.Shader.Fracture ? Client33RenderPipelines.POST_FRACTURE : super.pipeline();
+    }
+
+    @Override
     protected void setupPass(MeshRenderer renderer) {
+        if (chams.shader.get() == Chams.Shader.Fracture) {
+            Color base = chams.fractureColor.get();
+            Color seam = chams.fractureSeam.get();
+            renderer.uniform("FractureData", FRACTURE_STORAGE.writeUniform(new FractureUniforms(
+                base.r / 255f, base.g / 255f, base.b / 255f, base.a / 255f,
+                seam.r / 255f, seam.g / 255f, seam.b / 255f, seam.a / 255f,
+                chams.fractureScale.get().floatValue(), chams.fractureWidth.get().floatValue(),
+                chams.fractureGlow.get().floatValue(),
+                (float) ((mc.getFrameTimeNs() / 1e9 * chams.fractureSpeed.get()) % 1.0))));
+            return;
+        }
         Color color = chams.shaderColor.get();
 
         renderer.uniform("ImageData", UNIFORM_STORAGE.writeUniform(new UniformData(
@@ -119,8 +136,20 @@ public class ChamsShader extends EntityShader {
 
     private static final DynamicUniformStorage<UniformData> UNIFORM_STORAGE = new DynamicUniformStorage<>("Client33 - Image UBO", UNIFORM_SIZE, 16);
 
+    private static final int FRACTURE_SIZE = new Std140SizeCalculator().putVec4().putVec4().putVec4().get();
+    private static final DynamicUniformStorage<FractureUniforms> FRACTURE_STORAGE = new DynamicUniformStorage<>("Client33 - Fracture UBO", FRACTURE_SIZE, 16);
+
     public static void flipFrame() {
         UNIFORM_STORAGE.endFrame();
+        FRACTURE_STORAGE.endFrame();
+    }
+
+    private record FractureUniforms(float r, float g, float b, float a, float sr, float sg, float sb, float sa,
+                                    float size, float width, float glow, float speed) implements DynamicUniformStorage.DynamicUniform {
+        @Override
+        public void write(@NonNull ByteBuffer buffer) {
+            Std140Builder.intoBuffer(buffer).putVec4(r, g, b, a).putVec4(sr, sg, sb, sa).putVec4(size, width, glow, speed);
+        }
     }
 
     private record UniformData(float r, float g, float b, float a) implements DynamicUniformStorage.DynamicUniform {

@@ -12,6 +12,7 @@ import com.gaspoweredcake.client33.systems.modules.Categories;
 import com.gaspoweredcake.client33.systems.modules.Module;
 import com.gaspoweredcake.client33.utils.Utils;
 import com.gaspoweredcake.client33.utils.combat.CombatTelemetry;
+import com.gaspoweredcake.client33.utils.intel.SectionSnapshot;
 import com.gaspoweredcake.client33.utils.render.NametagUtils;
 import com.gaspoweredcake.client33.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
@@ -85,7 +86,7 @@ public class StructureESP extends Module {
             }
         }
         points.entrySet().removeIf(e -> e.getValue().debug ? !debugData.get() || now - e.getValue().seen > ttl.get() * 1000L
-            : !mc.level.hasChunk(e.getKey().getX() >> 4, e.getKey().getZ() >> 4) || !matches(mc.level.getBlockState(e.getKey())));
+            : !mc.level.hasChunk(e.getKey().getX() >> 4, e.getKey().getZ() >> 4) || !matches(SectionSnapshot.live(mc.level, e.getKey())));
         structures.entrySet().removeIf(e -> !debugData.get() || now - e.getValue().seen > ttl.get() * 1000L);
         if (scanning == null && queue.isEmpty()) for (ChunkAccess chunk : Utils.chunks()) {
             if (nearby(new BlockPos(chunk.getPos().x() * 16 + 8, 0, chunk.getPos().z() * 16 + 8))) queue.addLast(chunk);
@@ -104,7 +105,7 @@ public class StructureESP extends Module {
             var palette = scanning.getSection(section);
             if (offset == 0 && (palette.hasOnlyAir() || !palette.maybeHas(this::matches))) { section++; skippedSections++; continue; }
             int x = offset & 15, z = (offset >>> 4) & 15, y = (offset >>> 8) & 15;
-            BlockState state = palette.getBlockState(x, y, z);
+            BlockState state = SectionSnapshot.liveSection(palette, offset);
             if (matches(state)) {
                 var pos = new BlockPos(scanning.getPos().x() * 16 + x, scanning.getMinY() + section * 16 + y, scanning.getPos().z() * 16 + z);
                 if (!points.containsKey(pos) || !points.get(pos).debug)

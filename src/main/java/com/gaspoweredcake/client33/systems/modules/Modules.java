@@ -469,6 +469,7 @@ public class Modules extends System<Modules> {
         add(new ReverseStep());
         add(new SafeWalk());
         add(new Scaffold());
+        add(new ChunkProbe());
         add(new Slippy());
         add(new Sneak());
         add(new Speed());
@@ -496,6 +497,7 @@ public class Modules extends System<Modules> {
         add(new CombatVisuals());
         add(new FactionIntel());
         add(new MovementHeatmap());
+        add(new ActivityESP());
         add(new StructureESP());
         add(new Freecam());
         add(new FreeLook());
@@ -544,11 +546,14 @@ public class Modules extends System<Modules> {
         add(new Nuker());
         add(new PacketMine());
         add(new StashFinder());
+        add(new SpawnerInfo());
+        add(new SpawnerScanner());
         add(new SpawnProofer());
         add(new Timer());
         add(new VeinMiner());
 
         if (BaritoneUtils.IS_AVAILABLE) {
+            add(new AutoBaseFinder());
             add(new Excavator());
             add(new InfinityMiner());
         }
@@ -560,6 +565,7 @@ public class Modules extends System<Modules> {
         add(new BetterBeacons());
         add(new BetterChat());
         add(new BookBot());
+        add(new ChestStealer());
         add(new DiscordPresence());
         add(new InventoryTweaks());
         add(new MessageAura());

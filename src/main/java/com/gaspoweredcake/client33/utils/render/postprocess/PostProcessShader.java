@@ -38,6 +38,8 @@ public abstract class PostProcessShader {
 
     protected abstract void setupPass(MeshRenderer renderer);
 
+    protected RenderPipeline pipeline() { return pipeline; }
+
     public void clearTexture() {
         if (this.shouldDraw()) {
             RenderSystem.getDevice().createCommandEncoder().clearColorTexture(framebuffer.getColorTexture(),
@@ -58,7 +60,7 @@ public abstract class PostProcessShader {
 
         var renderer = MeshRenderer.begin()
             .attachments(mc.gameRenderer.mainRenderTarget())
-            .pipeline(pipeline)
+            .pipeline(pipeline())
             .fullscreen()
             .uniform("PostData", UNIFORM_STORAGE.writeUniform(new UniformData(
                 (float) mc.getWindow().getWidth(), (float) mc.getWindow().getHeight(),

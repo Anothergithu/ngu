@@ -21,6 +21,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.EntityHitResult;
 
 public class AutoShearer extends Module {
@@ -48,8 +49,7 @@ public class AutoShearer extends Module {
         .build()
     );
 
-    private Entity entity;
-    private InteractionHand hand;
+    private long generation;
 
     public AutoShearer() {
         super(Categories.World, "auto-shearer", "Automatically shears sheep.");
@@ -57,34 +57,51 @@ public class AutoShearer extends Module {
 
     @Override
     public void onDeactivate() {
-        entity = null;
+        generation++;
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        entity = null;
+        long tickGeneration = ++generation;
+        var owner = mc.player;
+        var world = mc.level;
+        if (owner == null || world == null || mc.gameMode == null) return;
 
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (!(entity instanceof Sheep sheep) || sheep.isSheared() || sheep.isBaby() || !PlayerUtils.isWithin(entity, distance.get()))
-                continue;
+        for (Entity entity : world.entitiesForRendering()) {
+            if (!(entity instanceof Sheep sheep) || sheep.isSheared() || sheep.isBaby() || !PlayerUtils.isWithin(entity, distance.get())) continue;
+            FindItemResult shears = InvUtils.findInHotbar(this::usableShears);
+            if (!shears.found()) return;
+            boolean offhand = shears.isOffhand();
+            int selected = owner.getInventory().getSelectedSlot();
+            ItemStack expected = (offhand ? owner.getOffhandItem() : owner.getInventory().getItem(shears.slot())).copy();
+            Runnable action = () -> {
+                if (!isActive() || generation != tickGeneration || mc.player != owner || mc.level != world || mc.gameMode == null
+                    || !owner.isAlive() || sheep.level() != world || sheep.isRemoved() || !sheep.isAlive()
+                    || sheep.isSheared() || sheep.isBaby() || !PlayerUtils.isWithin(sheep, distance.get())
+                    || owner.getInventory().getSelectedSlot() != selected) return;
+                ItemStack current = offhand ? owner.getOffhandItem() : owner.getInventory().getItem(shears.slot());
+                if (current.isEmpty() || !ItemStack.isSameItemSameComponents(expected, current) || !usableShears(current)) return;
 
-            FindItemResult findShear = InvUtils.findInHotbar(itemStack -> itemStack.getItem() == Items.SHEARS && (!antiBreak.get() || itemStack.getDamageValue() < itemStack.getMaxDamage() - 1));
-            if (!InvUtils.swap(findShear.slot(), true)) return;
-
-            this.hand = findShear.getHand();
-            this.entity = entity;
-
-            if (rotate.get())
-                Rotations.rotate(Rotations.getYaw(entity), Rotations.getPitch(entity), -100, this::interact);
-            else interact();
-
+                boolean swapped = !offhand && shears.slot() != selected;
+                if (swapped && !InvUtils.swap(shears.slot(), true)) return;
+                try {
+                    EntityHitResult location = new EntityHitResult(sheep, sheep.getBoundingBox().getCenter());
+                    mc.gameMode.interact(owner, sheep, location, offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
+                } finally {
+                    if (swapped) {
+                        if (mc.player == owner && owner.getInventory().getSelectedSlot() != shears.slot())
+                            InvUtils.swap(owner.getInventory().getSelectedSlot(), false);
+                        else InvUtils.swapBack();
+                    }
+                }
+            };
+            if (rotate.get()) Rotations.rotate(Rotations.getYaw(sheep), Rotations.getPitch(sheep), -100, action);
+            else action.run();
             return;
         }
     }
 
-    private void interact() {
-        EntityHitResult location = new EntityHitResult(entity, entity.getBoundingBox().getCenter());
-        mc.gameMode.interact(mc.player, entity, location, hand);
-        InvUtils.swapBack();
+    private boolean usableShears(ItemStack stack) {
+        return stack.getItem() == Items.SHEARS && (!antiBreak.get() || stack.getDamageValue() < stack.getMaxDamage() - 1);
     }
 }

@@ -26,6 +26,8 @@ import com.gaspoweredcake.client33.utils.player.PlayerUtils;
 import com.gaspoweredcake.client33.utils.player.Rotations;
 import com.gaspoweredcake.client33.utils.world.TickRate;
 import com.gaspoweredcake.client33.utils.combat.CombatTelemetry;
+import com.gaspoweredcake.client33.utils.combat.AttackCycle;
+import com.gaspoweredcake.client33.utils.combat.TargetSelection;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.tags.ItemTags;
@@ -48,6 +50,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
@@ -92,6 +95,14 @@ public class KillAura extends Module {
         .name("aim-at")
         .description("Which part of the target to aim at.")
         .defaultValue(Target.Body)
+        .visible(() -> rotation.get() != RotationMode.None)
+        .build()
+    );
+
+    private final Setting<AimMethod> aimMethod = sgGeneral.add(new EnumSetting.Builder<AimMethod>()
+        .name("aim-method")
+        .description("Configured Part uses Aim At; Closest Hitbox aims at the nearest interior point of the target bounds.")
+        .defaultValue(AimMethod.ConfiguredPart)
         .visible(() -> rotation.get() != RotationMode.None)
         .build()
     );
@@ -300,7 +311,9 @@ public class KillAura extends Module {
     private final List<Entity> targets = new ArrayList<>();
     private final TickTimer switchTimer = new TickTimer();
     private final TickTimer attackTimer = new TickTimer();
-    private long attackGeneration;
+    private final AttackCycle attackCycle = new AttackCycle();
+    private float targetingYaw;
+    private int swappedSlot = -1;
     private boolean wasPathing = false;
     public boolean attacking, swapped;
     public static int previousSlot;
@@ -316,9 +329,10 @@ public class KillAura extends Module {
         wasPathing = false;
         previousSlot = -1;
         swapped = false;
+        swappedSlot = -1;
         switchTimer.reset();
         attackTimer.reset();
-        attackGeneration++;
+        attackCycle.invalidate();
     }
 
     @Override
@@ -328,29 +342,16 @@ public class KillAura extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        attackGeneration++;
+        long generation = attackCycle.begin();
         switchTimer.advance();
         attackTimer.advance();
-        if (mc.player == null || mc.level == null || mc.gameMode == null
-            || !mc.player.isAlive() || PlayerUtils.getGameMode() == GameType.SPECTATOR) {
-            stopAttacking();
-            return;
-        }
-        if (pauseOnUse.get() && (mc.gameMode.isDestroying() || mc.player.isUsingItem())) {
-            stopAttacking();
-            return;
-        }
-        if (onlyOnClick.get() && !mc.options.keyAttack.isDown()) {
-            stopAttacking();
-            return;
-        }
-        if (TickRate.INSTANCE.getTimeSinceLastTick() >= 1f && pauseOnLag.get()) {
-            stopAttacking();
-            return;
-        }
-        if (pauseOnCA.get() && Modules.get().get(CrystalAura.class).isActive() && Modules.get().get(CrystalAura.class).kaTimer > 0) {
-            stopAttacking();
-            return;
+        if (!canOperate()) { stopAttacking(); return; }
+        targetingYaw = mc.player.getYRot();
+        if (swapped && mc.player.getInventory().getSelectedSlot() != swappedSlot) {
+            // Manual selection takes ownership of the hotbar back from this module.
+            swapped = false;
+            previousSlot = -1;
+            swappedSlot = -1;
         }
         if (onlyOnLook.get()) {
             Entity targeted = mc.crosshairPickEntity;
@@ -396,7 +397,8 @@ public class KillAura extends Module {
                     previousSlot = selectedSlot;
                     swapped = true;
                 }
-                InvUtils.swap(weaponResult.slot(), false);
+                if (!InvUtils.swap(weaponResult.slot(), false)) { stopAttacking(); return; }
+                swappedSlot = weaponResult.slot();
             }
         }
 
@@ -413,13 +415,18 @@ public class KillAura extends Module {
 
         RotationMode rotationMode = rotation.get();
         if (delayCheck()) {
-            long generation = attackGeneration;
+            var owner = mc.player;
+            var world = mc.level;
+            int slot = owner.getInventory().getSelectedSlot();
+            ItemStack weapon = owner.getMainHandItem().copy();
             for (Entity target : List.copyOf(targets)) {
                 Runnable hit = () -> {
-                    if (generation == attackGeneration && isActive() && attacking
-                        && mc.player != null && mc.level != null && mc.gameMode != null
-                        && target.level() == mc.level && delayCheck()
-                        && acceptableWeapon(mc.player.getMainHandItem()) && entityCheck(target)) attack(target);
+                    if (!attackCycle.valid(generation) || !isActive() || !attacking) return;
+                    if (!canOperate()) { stopAttacking(); return; }
+                    if (mc.player != owner || mc.level != world || owner.getInventory().getSelectedSlot() != slot
+                        || !ItemStack.isSameItemSameComponents(weapon, owner.getMainHandItem())
+                        || !delayCheck() || !acceptableWeapon(owner.getMainHandItem()) || !entityCheck(target)) return;
+                    if (attackCycle.claim(generation, customDelay.get() && hitDelay.get() == 0)) attack(target);
                 };
                 if (rotationMode == RotationMode.None) hit.run();
                 else rotateTo(target, hit);
@@ -437,18 +444,30 @@ public class KillAura extends Module {
     }
 
     private void stopAttacking() {
-        attackGeneration++;
+        attackCycle.invalidate();
         targets.clear();
         attacking = false;
         if (wasPathing) {
             PathManagers.get().resume();
             wasPathing = false;
         }
-        if (swapBack.get() && swapped && previousSlot >= 0 && mc.player != null) {
+        if (swapBack.get() && swapped && previousSlot >= 0 && mc.player != null
+            && mc.player.getInventory().getSelectedSlot() == swappedSlot) {
             InvUtils.swap(previousSlot, false);
         }
         swapped = false;
         previousSlot = -1;
+        swappedSlot = -1;
+    }
+
+    private boolean canOperate() {
+        if (mc.player == null || mc.level == null || mc.gameMode == null || !mc.player.isAlive()
+            || PlayerUtils.getGameMode() == GameType.SPECTATOR) return false;
+        if (pauseOnUse.get() && (mc.gameMode.isDestroying() || mc.player.isUsingItem())) return false;
+        if (onlyOnClick.get() && !mc.options.keyAttack.isDown()) return false;
+        if (pauseOnLag.get() && TickRate.INSTANCE.getTimeSinceLastTick() >= 1f) return false;
+        CrystalAura crystals = Modules.get().get(CrystalAura.class);
+        return !pauseOnCA.get() || !crystals.isActive() || crystals.kaTimer <= 0;
     }
 
     private boolean shouldShieldBreak() {
@@ -466,7 +485,7 @@ public class KillAura extends Module {
     }
 
     private boolean entityCheck(Entity entity) {
-        if (entity.equals(mc.player) || entity.equals(mc.getCameraEntity())) return false;
+        if (entity == mc.player || entity == mc.getCameraEntity() || entity.isRemoved() || entity.level() != mc.level) return false;
         if ((entity instanceof LivingEntity livingEntity && livingEntity.isDeadOrDying()) || !entity.isAlive())
             return false;
 
@@ -483,7 +502,7 @@ public class KillAura extends Module {
         if (distanceSquared > range.get() * range.get()) return false;
         double wallReach = Math.min(range.get(), wallsRange.get());
         if (!PlayerUtils.canSeeEntity(entity) && distanceSquared > wallReach * wallReach) return false;
-        if (Math.abs(Mth.wrapDegrees(Rotations.getYaw(entity) - mc.player.getYRot())) > fieldOfView.get() / 2) return false;
+        if (Math.abs(Mth.wrapDegrees(Rotations.getYaw(entity) - targetingYaw)) > fieldOfView.get() / 2) return false;
         if (ignoreTamed.get()) {
             if (entity instanceof OwnableEntity tameable
                 && tameable.getOwner() != null
@@ -516,20 +535,33 @@ public class KillAura extends Module {
     }
 
     private void collectTargets() {
-        Entity previous = getTarget();
-        targets.clear();
-        // The world's spatial query avoids sorting every rendered entity each tick.
-        targets.addAll(mc.level.getEntities(mc.player, mc.player.getBoundingBox().inflate(range.get()), this::entityCheck));
+        Entity previous = keepTarget.get() ? getTarget() : null;
+        Comparator<RankedTarget> order = Comparator.comparingDouble(RankedTarget::score)
+            .thenComparingInt(candidate -> candidate.entity().getId());
+        RankedTarget retained = previous == null ? null : rank(previous);
+        TargetSelection<RankedTarget> selection = new TargetSelection<>(maxTargets.get(), retained, order);
+        for (Entity entity : mc.level.getEntities(mc.player, mc.player.getBoundingBox().inflate(range.get()), this::entityCheck)) {
+            selection.add(rank(entity));
+        }
         FakePlayerManager.forEach(player -> {
-            if (!targets.contains(player) && entityCheck(player)) targets.add(player);
+            if (entityCheck(player)) selection.add(rank(player));
         });
-        targets.sort((left, right) -> {
-            if (priority.get() != SortPriority.ClosestAngle) return priority.get().compare(left, right);
-            return Double.compare(angleScore(left), angleScore(right));
-        });
-        if (keepTarget.get() && previous != null && targets.remove(previous)) targets.addFirst(previous);
-        if (targets.size() > maxTargets.get()) targets.subList(maxTargets.get(), targets.size()).clear();
+        targets.clear();
+        for (RankedTarget candidate : selection.result()) targets.add(candidate.entity());
     }
+
+    private RankedTarget rank(Entity entity) {
+        double score = switch (priority.get()) {
+            case ClosestAngle -> angleScore(entity);
+            case LowestDistance -> PlayerUtils.squaredDistanceTo(entity);
+            case HighestDistance -> -PlayerUtils.squaredDistanceTo(entity);
+            case LowestHealth -> entity instanceof LivingEntity living ? living.getHealth() : Double.NEGATIVE_INFINITY;
+            case HighestHealth -> entity instanceof LivingEntity living ? -living.getHealth() : Double.POSITIVE_INFINITY;
+        };
+        return new RankedTarget(entity, score);
+    }
+
+    private record RankedTarget(Entity entity, double score) {}
 
     private double angleScore(Entity entity) {
         double yaw = Mth.wrapDegrees(Rotations.getYaw(entity) - mc.player.getYRot());
@@ -553,6 +585,17 @@ public class KillAura extends Module {
     }
 
     private void rotateTo(Entity target, Runnable callback) {
+        if (aimMethod.get() == AimMethod.ClosestHitbox) {
+            Vec3 eye = mc.player.getEyePosition();
+            AABB box = target.getBoundingBox();
+            if (!box.contains(eye)) {
+                double inset = Math.min(0.02, Math.min(box.getXsize(), Math.min(box.getYsize(), box.getZsize())) / 4);
+                Vec3 point = new Vec3(Mth.clamp(eye.x, box.minX + inset, box.maxX - inset),
+                    Mth.clamp(eye.y, box.minY + inset, box.maxY - inset), Mth.clamp(eye.z, box.minZ + inset, box.maxZ - inset));
+                Rotations.rotate(Rotations.getYaw(point), Rotations.getPitch(point), callback);
+                return;
+            }
+        }
         Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target, aimAt.get()), callback);
     }
 
@@ -580,6 +623,8 @@ public class KillAura extends Module {
         if (!targets.isEmpty()) return EntityUtils.getName(getTarget());
         return null;
     }
+
+    public enum AimMethod { ConfiguredPart, ClosestHitbox }
 
     public enum AttackItems {
         Weapons,

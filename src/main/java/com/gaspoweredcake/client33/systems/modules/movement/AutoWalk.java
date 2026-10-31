@@ -25,6 +25,7 @@ import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.util.Mth;
 
 public class AutoWalk extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -141,8 +142,8 @@ public class AutoWalk extends Module {
     @EventHandler
     private void onPlayerMove(PlayerMoveEvent event) {
         if (mode.get() == Mode.Simple && waitForChunks.get()) {
-            int chunkX = (int) ((mc.player.getX() + event.movement.x * 2) / 16);
-            int chunkZ = (int) ((mc.player.getZ() + event.movement.z * 2) / 16);
+            int chunkX = Mth.floor((mc.player.getX() + event.movement.x * 2) / 16);
+            int chunkZ = Mth.floor((mc.player.getZ() + event.movement.z * 2) / 16);
             if (!mc.level.getChunkSource().hasChunk(chunkX, chunkZ)) {
                 ((IVec3) event.movement).client33$set(0, event.movement.y, 0);
             }

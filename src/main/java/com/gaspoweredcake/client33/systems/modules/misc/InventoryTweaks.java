@@ -463,6 +463,10 @@ public class InventoryTweaks extends Module {
         Client33Executor.execute(() -> moveSlots(handler, playerInvOffset, playerInvOffset + 4 * 9, false));
     }
 
+    public boolean isAutoMoving() {
+        return isActive() && (autoSteal.get() || autoDump.get() || sorter != null);
+    }
+
     public boolean showButtons() {
         return isActive() && buttons.get();
     }

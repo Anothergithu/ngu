@@ -392,16 +392,19 @@ public class Surround extends Module {
 
             Predicate<Entity> entityPredicate = entity -> entity instanceof EndCrystal && DamageUtils.crystalDamage(mc.player, entity.position()) < PlayerUtils.getTotalHealth();
 
+            var owner = mc.player;
+            var world = mc.level;
             for (Entity crystal : mc.level.getEntities((Entity) null, box, entityPredicate)) {
-                if (rotate.get()) {
-                    Rotations.rotate(Rotations.getPitch(crystal), Rotations.getYaw(crystal), () -> {
-                        mc.player.connection.send(new ServerboundAttackPacket(crystal.getId()));
-                    });
-                } else {
-                    mc.player.connection.send(new ServerboundAttackPacket(crystal.getId()));
-                }
-
-                mc.getConnection().send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+                Runnable attack = () -> {
+                    if (!isActive() || !protect.get() || mc.player != owner || mc.level != world || !owner.isAlive()
+                        || crystal.isRemoved() || !crystal.isAlive() || crystal.level() != world
+                        || !box.intersects(crystal.getBoundingBox())
+                        || DamageUtils.crystalDamage(owner, crystal.position()) >= PlayerUtils.getTotalHealth()) return;
+                    owner.connection.send(new ServerboundAttackPacket(crystal.getId()));
+                    owner.connection.send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+                };
+                if (rotate.get()) Rotations.rotate(Rotations.getYaw(crystal), Rotations.getPitch(crystal), attack);
+                else attack.run();
             }
         }
 

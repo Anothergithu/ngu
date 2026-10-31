@@ -9,6 +9,7 @@ import com.gaspoweredcake.client33.Client33;
 import com.gaspoweredcake.client33.events.game.GameLeftEvent;
 import com.gaspoweredcake.client33.events.world.TickEvent;
 import com.gaspoweredcake.client33.utils.PreInit;
+import com.gaspoweredcake.client33.utils.intel.SectionSnapshot;
 import com.gaspoweredcake.client33.utils.Utils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
@@ -39,7 +40,7 @@ public final class BlockIterator {
         if (!Utils.canUpdate()) { scans.clear(); return; }
         var level = mc.level;
         scans.run(mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ(),
-            level.getMinY(), level.getMinY() + level.getHeight(), (x, y, z) -> level.getBlockState(position.set(x, y, z)));
+            level.getMinY(), level.getMinY() + level.getHeight(), (x, y, z) -> SectionSnapshot.live(level, position.set(x, y, z)));
     }
 
     public static void register(int horizontalRadius, int verticalRadius, BiConsumer<BlockPos, BlockState> function) {
