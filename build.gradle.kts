@@ -95,6 +95,7 @@ dependencies {
     jij(libs.starscript)
     jij(libs.discord.ipc)
     jij(libs.reflections)
+    jij(libs.sqlite.jdbc) { isTransitive = false }
     jij(libs.netty.handler.proxy) { isTransitive = false }
     jij(libs.netty.codec.socks) { isTransitive = false }
     jij(libs.waybackauthlib)
@@ -262,7 +263,7 @@ publishing {
 
 // Pure module math can be checked without launching a Minecraft client.
 val regression = sourceSets.create("regression") {
-    compileClasspath += sourceSets.main.get().output
+    compileClasspath += sourceSets.main.get().output + sourceSets.main.get().compileClasspath
     runtimeClasspath += sourceSets.main.get().output + configurations.runtimeClasspath.get()
 }
 val moduleLogicRegression = tasks.register<JavaExec>("moduleLogicRegression") {

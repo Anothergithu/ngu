@@ -20,8 +20,13 @@ import com.gaspoweredcake.client33.events.game.GameLeftEvent;
 import com.gaspoweredcake.client33.events.game.SendMessageEvent;
 import com.gaspoweredcake.client33.events.packets.ContainerSlotUpdateEvent;
 import com.gaspoweredcake.client33.events.packets.InventoryEvent;
+import com.gaspoweredcake.client33.events.packets.SlotPacketObservedEvent;
+import com.gaspoweredcake.client33.events.packets.AppliedSpawnerDataEvent;
 import com.gaspoweredcake.client33.events.packets.PlaySoundPacketEvent;
 import com.gaspoweredcake.client33.events.world.ChunkDataEvent;
+import com.gaspoweredcake.client33.events.world.AppliedBlockUpdateEvent;
+import com.gaspoweredcake.client33.events.world.AppliedEntityMetadataEvent;
+import com.gaspoweredcake.client33.events.world.ServerPositionEvent;
 import com.gaspoweredcake.client33.mixininterface.IClientboundExplodePacket;
 import com.gaspoweredcake.client33.pathing.BaritoneUtils;
 import com.gaspoweredcake.client33.systems.config.Config;
@@ -94,6 +99,81 @@ public abstract class ClientPacketListenerMixin extends ClientCommonPacketListen
     private void onHandleLevelChunkWithLight(ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci) {
         LevelChunk chunk = minecraft.level.getChunk(packet.getX(), packet.getZ());
         Client33.EVENT_BUS.post(new ChunkDataEvent(chunk));
+        Client33.EVENT_BUS.post(new AppliedSpawnerDataEvent(packet));
+    }
+
+    @Inject(method = "handleAddEntity", at = @At("TAIL"))
+    private void onRawEntitySpawn(ClientboundAddEntityPacket packet, CallbackInfo ci) {
+        if (level == null) return;
+        Entity entity = level.getEntity(packet.getId());
+        if (entity != null) Client33.EVENT_BUS.post(new ServerPositionEvent(entity,
+            new Vec3(packet.getX(), packet.getY(), packet.getZ()), "entity-spawn", System.nanoTime()));
+    }
+
+    @Inject(method = "handleMoveEntity", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V", shift = At.Shift.AFTER))
+    private void onRawEntityMove(ClientboundMoveEntityPacket packet, CallbackInfo ci) {
+        if (!packet.hasPosition() || level == null) return;
+        Entity entity = packet.getEntity(level);
+        if (entity == null) return;
+        Vec3 position = entity.getPositionCodec().decode(packet.getXa(), packet.getYa(), packet.getZa());
+        Client33.EVENT_BUS.post(new ServerPositionEvent(entity, position, "relative-move", System.nanoTime()));
+    }
+
+    @Inject(method = "handleEntityPositionSync", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V", shift = At.Shift.AFTER))
+    private void onRawEntitySync(ClientboundEntityPositionSyncPacket packet, CallbackInfo ci) {
+        if (level == null) return;
+        Entity entity = level.getEntity(packet.id());
+        if (entity != null) Client33.EVENT_BUS.post(new ServerPositionEvent(entity, packet.values().position(), "position-sync", System.nanoTime()));
+    }
+
+    @Inject(method = "handleTeleportEntity", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V", shift = At.Shift.AFTER))
+    private void onRawEntityTeleport(ClientboundTeleportEntityPacket packet, CallbackInfo ci) {
+        if (level == null) return;
+        Entity entity = level.getEntity(packet.id());
+        if (entity == null) return;
+        Vec3 position = net.minecraft.world.entity.PositionMoveRotation.calculateAbsolute(
+            net.minecraft.world.entity.PositionMoveRotation.of(entity), packet.change(), packet.relatives()).position();
+        Client33.EVENT_BUS.post(new ServerPositionEvent(entity, position, "teleport", System.nanoTime()));
+    }
+
+    @Inject(method = "handleSetEntityData", at = @At("TAIL"))
+    private void onAppliedEntityData(ClientboundSetEntityDataPacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new AppliedEntityMetadataEvent(packet));
+    }
+
+    @Inject(method = "handleBlockUpdate", at = @At("TAIL"))
+    private void onAppliedBlockUpdate(ClientboundBlockUpdatePacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new AppliedBlockUpdateEvent(packet));
+    }
+
+    @Inject(method = "handleChunkBlocksUpdate", at = @At("TAIL"))
+    private void onAppliedChunkBlocksUpdate(ClientboundSectionBlocksUpdatePacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new AppliedBlockUpdateEvent(packet));
+    }
+
+    @Inject(method = "handleLightUpdatePacket", at = @At("TAIL"))
+    private void onAppliedLightUpdate(ClientboundLightUpdatePacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new AppliedBlockUpdateEvent(packet));
+    }
+
+    @Inject(method = "handleBlockEntityData", at = @At("TAIL"))
+    private void onAppliedBlockEntityData(ClientboundBlockEntityDataPacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new AppliedSpawnerDataEvent(packet));
+    }
+
+    @Inject(method = "handleForgetLevelChunk", at = @At("TAIL"))
+    private void onAppliedForgetChunk(ClientboundForgetLevelChunkPacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new AppliedSpawnerDataEvent(packet));
+    }
+
+    @Inject(method = "handleContainerSetSlot", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V", shift = At.Shift.AFTER))
+    private void onObserveContainerSetSlot(ClientboundContainerSetSlotPacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new SlotPacketObservedEvent(packet));
+    }
+
+    @Inject(method = "handleContainerContent", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V", shift = At.Shift.AFTER))
+    private void onObserveContainerContent(ClientboundContainerSetContentPacket packet, CallbackInfo ci) {
+        Client33.EVENT_BUS.post(new SlotPacketObservedEvent(packet));
     }
 
     @Inject(method = "handleContainerSetSlot", at = @At("TAIL"))

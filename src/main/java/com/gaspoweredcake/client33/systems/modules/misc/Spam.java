@@ -110,7 +110,7 @@ public class Spam extends Module {
         .build()
     );
 
-    private int messageI, timer, splitNum;
+    private int messageI, timer, splitOffset;
     private String text;
 
     public Spam() {
@@ -121,7 +121,8 @@ public class Spam extends Module {
     public void onActivate() {
         timer = delay.get();
         messageI = 0;
-        splitNum = 0;
+        splitOffset = 0;
+        text = null;
     }
 
     @EventHandler
@@ -159,27 +160,18 @@ public class Spam extends Module {
                 }
             }
 
-            if (autoSplitMessages.get() && text.length() > splitLength.get()) {
-                // the number of individual messages the whole text needs to be broken into
-                double length = text.length();
-                int splits = (int) Math.ceil(length / splitLength.get());
-
-                // determine which chunk we need to send
-                int start = splitNum * splitLength.get();
-                int end = Math.min(start + splitLength.get(), text.length());
-                ChatUtils.sendPlayerMsg(text.substring(start, end));
-
-                splitNum = ++splitNum % splits;
+            if (autoSplitMessages.get() && text.length() - splitOffset > splitLength.get()) {
+                int end = splitOffset + splitLength.get();
+                ChatUtils.sendPlayerMsg(text.substring(splitOffset, end));
+                splitOffset = end;
                 timer = autoSplitDelay.get();
-                if (splitNum == 0) { // equals zero when all chunks are sent
-                    timer = delay.get();
-                    text = null;
-                }
             } else {
-                if (text.length() > 256) text = text.substring(0, 256); // prevent kick
-                ChatUtils.sendPlayerMsg(text);
+                String remaining = text.substring(splitOffset);
+                if (remaining.length() > 256) remaining = remaining.substring(0, 256); // prevent kick
+                ChatUtils.sendPlayerMsg(remaining);
                 timer = delay.get();
                 text = null;
+                splitOffset = 0;
             }
         } else {
             timer--;

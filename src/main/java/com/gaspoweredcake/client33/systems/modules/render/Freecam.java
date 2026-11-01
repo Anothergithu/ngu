@@ -64,6 +64,24 @@ public class Freecam extends Module {
         .build()
     );
 
+    private final Setting<Double> sprintMultiplier = sgGeneral.add(new DoubleSetting.Builder()
+        .name("sprint-multiplier")
+        .description("Camera speed multiplier while sprint is held.")
+        .defaultValue(2.0)
+        .min(0)
+        .sliderMax(5)
+        .build()
+    );
+
+    private final Setting<Double> verticalMultiplier = sgGeneral.add(new DoubleSetting.Builder()
+        .name("vertical-multiplier")
+        .description("Vertical camera speed relative to horizontal speed.")
+        .defaultValue(1.0)
+        .min(0)
+        .sliderMax(5)
+        .build()
+    );
+
     private final Setting<Double> speedScrollSensitivity = sgGeneral.add(new DoubleSetting.Builder()
         .name("speed-scroll-sensitivity")
         .description("Allows you to change speed value using scroll wheel. 0 to disable.")
@@ -171,6 +189,7 @@ public class Freecam extends Module {
 
     private double fovScale;
     private boolean bobView;
+    private boolean staticViewApplied, chunksReloaded;
 
     private boolean forward, backward, right, left, up, down, isSneaking;
 
@@ -184,7 +203,10 @@ public class Freecam extends Module {
     public void onActivate() {
         fovScale = mc.options.fovEffectScale().get();
         bobView = mc.options.bobView().get();
-        if (staticView.get()) {
+        staticViewApplied = staticView.get();
+        chunksReloaded = reloadChunks.get();
+        clickTs = 0;
+        if (staticViewApplied) {
             mc.options.fovEffectScale().set((double) 0);
             mc.options.bobView().set(false);
         }
@@ -215,34 +237,42 @@ public class Freecam extends Module {
         down = Input.isPressed(mc.options.keyShift);
 
         unpress();
-        if (reloadChunks.get()) {
+        if (chunksReloaded) {
             mc.levelExtractor.allChanged();
         }
     }
 
     @Override
     public void onDeactivate() {
-        if (reloadChunks.get()) {
+        if (chunksReloaded || reloadChunks.get()) {
             mc.execute(mc.levelExtractor::allChanged);
         }
 
         mc.options.setCameraType(perspective);
 
-        if (staticView.get()) {
+        if (staticViewApplied) {
             mc.options.fovEffectScale().set(fovScale);
             mc.options.bobView().set(bobView);
         }
 
         isSneaking = false;
+        clearMovement();
+        staticViewApplied = false;
+        chunksReloaded = false;
     }
 
     @EventHandler
     private void onOpenScreen(OpenScreenEvent event) {
+        if (event.screen != null && !Modules.get().get(GUIMove.class).isActive()) clearMovement();
         unpress();
 
         prevPos.set(pos);
         lastYaw = yaw;
         lastPitch = pitch;
+    }
+
+    private void clearMovement() {
+        forward = backward = left = right = up = down = false;
     }
 
     private void unpress() {
@@ -313,7 +343,12 @@ public class Freecam extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.getCameraEntity().isInWall()) mc.getCameraEntity().noPhysics = true;
+        if (mc.player == null || mc.level == null || mc.getCameraEntity() == null) return;
+        if (checkGuiMove()) {
+            clearMovement();
+            prevPos.set(pos);
+            return;
+        }
         if (!perspective.isFirstPerson()) mc.options.setCameraType(CameraType.FIRST_PERSON);
 
         Vec3 forward = Vec3.directionFromRotation(0, yaw);
@@ -329,9 +364,9 @@ public class Freecam extends Module {
             if (mc.hitResult instanceof EntityHitResult ehr) {
                 crossHairPos = ehr.getEntity().blockPosition();
                 Rotations.rotate(Rotations.getYaw(crossHairPos), Rotations.getPitch(crossHairPos), 0, null);
-            } else {
-                crossHairPosition = mc.hitResult.getLocation();
-                crossHairPos = ((BlockHitResult) mc.hitResult).getBlockPos();
+            } else if (mc.hitResult instanceof BlockHitResult hit) {
+                crossHairPosition = hit.getLocation();
+                crossHairPos = hit.getBlockPos();
 
                 if (!mc.level.getBlockState(crossHairPos).isAir()) {
                     Rotations.rotate(Rotations.getYaw(crossHairPosition), Rotations.getPitch(crossHairPosition), 0, null);
@@ -339,45 +374,13 @@ public class Freecam extends Module {
             }
         }
 
-        double s = 0.5;
-        if (Input.isPressed(mc.options.keySprint)) s = 1;
-
-        boolean a = false;
-        if (this.forward) {
-            velX += forward.x * s * speedValue;
-            velZ += forward.z * s * speedValue;
-            a = true;
-        }
-        if (this.backward) {
-            velX -= forward.x * s * speedValue;
-            velZ -= forward.z * s * speedValue;
-            a = true;
-        }
-
-        boolean b = false;
-        if (this.right) {
-            velX += right.x * s * speedValue;
-            velZ += right.z * s * speedValue;
-            b = true;
-        }
-        if (this.left) {
-            velX -= right.x * s * speedValue;
-            velZ -= right.z * s * speedValue;
-            b = true;
-        }
-
-        if (a && b) {
-            double diagonal = 1 / Math.sqrt(2);
-            velX *= diagonal;
-            velZ *= diagonal;
-        }
-
-        if (this.up) {
-            velY += s * speedValue;
-        }
-        if (this.down) {
-            velY -= s * speedValue;
-        }
+        double movementSpeed = 0.5 * speedValue * (Input.isPressed(mc.options.keySprint) ? sprintMultiplier.get() : 1);
+        int longitudinal = (this.forward ? 1 : 0) - (this.backward ? 1 : 0);
+        int lateral = (this.right ? 1 : 0) - (this.left ? 1 : 0);
+        double horizontalScale = longitudinal != 0 && lateral != 0 ? 1 / Math.sqrt(2) : 1;
+        velX = (forward.x * longitudinal + right.x * lateral) * movementSpeed * horizontalScale;
+        velZ = (forward.z * longitudinal + right.z * lateral) * movementSpeed * horizontalScale;
+        velY = ((this.up ? 1 : 0) - (this.down ? 1 : 0)) * movementSpeed * verticalMultiplier.get();
 
         prevPos.set(pos);
         pos.set(pos.x + velX, pos.y + velY, pos.z + velZ);
@@ -509,6 +512,7 @@ public class Freecam extends Module {
 
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
+        if (mc.player == null || mc.level == null) return;
         if (event.packet instanceof ClientboundPlayerCombatKillPacket packet) {
             Entity entity = mc.level.getEntity(packet.playerId());
             if (entity == mc.player && toggleOnDeath.get()) {
@@ -553,7 +557,7 @@ public class Freecam extends Module {
     }
 
     public boolean staySneaking() {
-        return isActive() && !mc.player.getAbilities().flying && staySneaking.get() && isSneaking;
+        return isActive() && mc.player != null && !mc.player.getAbilities().flying && staySneaking.get() && isSneaking;
     }
 
     public double getX(float tickDelta) {

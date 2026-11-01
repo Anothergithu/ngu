@@ -823,7 +823,7 @@ public class CrystalAura extends Module {
         boolean shouldFacePlace = shouldFacePlace();
         double minimumDamage = shouldFacePlace ? Math.min(minDamage.get(), 1.5d) : minDamage.get();
 
-        if (damage < minimumDamage || !safeExplosion(entity.position(), blockPos)
+        if (damage < minimumDamage || !safeExplosion(entity.position(), blockPos, selfDamage)
             || !ExplosionRisk.advantage(damage, selfDamage, damageAdvantage.get())) return 0f;
 
         return damage;
@@ -969,7 +969,7 @@ public class CrystalAura extends Module {
             boolean shouldFacePlace = shouldFacePlace();
             double minimumDamage = Math.min(minDamage.get(), shouldFacePlace ? 1.5 : minDamage.get());
 
-            if (damage < minimumDamage || !safeExplosion(vec3d, bp)
+            if (damage < minimumDamage || !safeExplosion(vec3d, bp, selfDamage)
                 || !ExplosionRisk.advantage(damage, selfDamage, damageAdvantage.get())) return;
 
             // Check if it can be placed
@@ -1044,13 +1044,15 @@ public class CrystalAura extends Module {
         if (!isActive() || mc.player == null || mc.level == null || shouldPause(PauseMode.Place)) return;
         BlockPos base = result.getBlockPos();
         Vec3 explosion = new Vec3(base.getX() + 0.5, base.getY() + 1, base.getZ() + 0.5);
-        if (isOutOfRange(explosion, base, true) || !safeExplosion(explosion, base)) return;
+        if (isOutOfRange(explosion, base, true)) return;
+        // Recalculate at action time, then reuse this value for the advantage check.
+        float selfDamage = DamageUtils.crystalDamage(mc.player, explosion, predictMovement.get(), base);
+        if (!safeExplosion(explosion, base, selfDamage)) return;
         if (supportBlock == null) {
             if (!(mc.level.getBlockState(base).is(Blocks.OBSIDIAN) || mc.level.getBlockState(base).is(Blocks.BEDROCK))
                 || !mc.level.getBlockState(base.above()).isAir()
                 || (placement112.get() && !mc.level.getBlockState(base.above(2)).isAir())) return;
             float currentDamage = getDamageToTargets(explosion, base, false, false);
-            float selfDamage = DamageUtils.crystalDamage(mc.player, explosion, predictMovement.get(), base);
             if (currentDamage < (shouldFacePlace() ? Math.min(minDamage.get(), 1.5) : minDamage.get())
                 || !ExplosionRisk.advantage(currentDamage, selfDamage, damageAdvantage.get())) return;
             ((IAABB) box).client33$set(base.getX(), base.getY() + 1, base.getZ(), base.getX() + 1, base.getY() + (placement112.get() ? 2 : 3), base.getZ() + 1);
@@ -1114,8 +1116,7 @@ public class CrystalAura extends Module {
         return serverPacing.get() ? (int) Math.min(1200, Math.ceil(ticks * CombatTelemetry.CLOCK.tickMillis() / 50)) : ticks;
     }
 
-    private boolean safeExplosion(Vec3 position, BlockPos base) {
-        float self = DamageUtils.crystalDamage(mc.player, position, predictMovement.get(), base);
+    private boolean safeExplosion(Vec3 position, BlockPos base, float self) {
         if (!ExplosionRisk.safeSelf(self, maxDamage.get(), EntityUtils.getTotalHealth(mc.player), healthReserve.get(), antiSuicide.get())) return false;
         if (protectFriends.get()) for (Player friend : mc.level.players()) {
             if (friend == mc.player || !Friends.get().isFriend(friend) || friend.distanceToSqr(position) > 144) continue;

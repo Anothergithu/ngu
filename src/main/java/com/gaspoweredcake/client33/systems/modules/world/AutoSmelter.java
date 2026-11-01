@@ -14,6 +14,7 @@ import com.gaspoweredcake.client33.settings.SettingGroup;
 import com.gaspoweredcake.client33.systems.modules.Categories;
 import com.gaspoweredcake.client33.systems.modules.Module;
 import com.gaspoweredcake.client33.utils.Utils;
+import com.gaspoweredcake.client33.utils.inventory.GuardedActions;
 import com.gaspoweredcake.client33.utils.player.InvUtils;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
 import net.minecraft.world.inventory.ContainerInput;
@@ -82,19 +83,16 @@ public class AutoSmelter extends Module {
     }
 
     public void tick(AbstractFurnaceMenu c) {
-        // Limit actions to happen every n ticks
-        if (mc.player.tickCount % 10 == 0) return;
-
-        // Check for fuel
-        checkFuel(c);
-
-        // Take the smelted results
-        takeResults(c);
-
-        // Insert new items
-        insertItems(c);
-
-        if (autoClose.get()) mc.gui.setScreen(null);
+        var player = mc.player;
+        if (player == null || player.tickCount % 10 == 0) return;
+        GuardedActions.run(
+            () -> isActive() && mc.player == player && mc.gameMode != null
+                && player.containerMenu == c && c.getCarried().isEmpty(),
+            () -> checkFuel(c),
+            () -> takeResults(c),
+            () -> insertItems(c),
+            () -> { if (autoClose.get()) mc.gui.setScreen(null); }
+        );
     }
 
     private void insertItems(AbstractFurnaceMenu c) {
@@ -122,7 +120,6 @@ public class AutoSmelter extends Module {
         if (slot == -1) return;
 
         InvUtils.move().fromId(slot).toId(0);
-        c.slots.getFirst().getItem().isEmpty();
     }
 
     private void checkFuel(AbstractFurnaceMenu c) {
@@ -172,7 +169,6 @@ public class AutoSmelter extends Module {
             mc.gameMode.handleContainerInput(c.containerId, fromId, 0, ContainerInput.PICKUP, mc.player);
         }
 
-        c.slots.get(1).getItem().isEmpty();
     }
 
     private void takeResults(AbstractFurnaceMenu c) {
@@ -181,7 +177,7 @@ public class AutoSmelter extends Module {
 
         InvUtils.shiftClick().slotId(2);
 
-        if (!resultStack.isEmpty()) {
+        if (!c.slots.get(2).getItem().isEmpty()) {
             error("Your inventory is full. Disabling.");
             toggle();
         }

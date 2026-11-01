@@ -14,6 +14,8 @@ import io.netty.handler.proxy.Socks5ProxyHandler;
 import io.netty.handler.timeout.TimeoutException;
 import com.gaspoweredcake.client33.Client33;
 import com.gaspoweredcake.client33.events.packets.PacketEvent;
+import com.gaspoweredcake.client33.utils.intel.RawPacketCapture;
+import com.gaspoweredcake.client33.utils.intel.TranslationGuard;
 import com.gaspoweredcake.client33.events.world.ServerConnectEndEvent;
 import com.gaspoweredcake.client33.systems.modules.Modules;
 import com.gaspoweredcake.client33.systems.modules.misc.AntiPacketKick;
@@ -43,16 +45,22 @@ import java.util.Iterator;
 
 @Mixin(Connection.class)
 public abstract class ConnectionMixin {
+    @Inject(method = "channelRead0(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/protocol/Packet;)V", at = @At("HEAD"))
+    private void onGuardPacket(ChannelHandlerContext ctx, Packet<?> packet, CallbackInfo ci) {
+        if (packet instanceof ClientboundBundlePacket bundle) {
+            for (Packet<?> nested : bundle.subPackets()) TranslationGuard.filter(nested);
+        } else TranslationGuard.filter(packet);
+        RawPacketCapture.publish(ctx.channel());
+    }
+
     @Inject(method = "channelRead0(Lio/netty/channel/ChannelHandlerContext;Lnet/minecraft/network/protocol/Packet;)V",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/network/Connection;genericsFtw(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;)V", shift = At.Shift.BEFORE), cancellable = true)
     private void onHandlePacket(ChannelHandlerContext ctx, Packet<?> packet, CallbackInfo ci) {
         if (packet instanceof ClientboundBundlePacket bundle) {
             for (Iterator<Packet<? super ClientGamePacketListener>> it = bundle.subPackets().iterator(); it.hasNext(); ) {
-                if (Client33.EVENT_BUS.post(new PacketEvent.Receive(it.next(), (Connection) (Object) this)).isCancelled())
-                    it.remove();
+                if (Client33.EVENT_BUS.post(new PacketEvent.Receive(it.next(), (Connection) (Object) this)).isCancelled()) it.remove();
             }
-        } else if (Client33.EVENT_BUS.post(new PacketEvent.Receive(packet, (Connection) (Object) this)).isCancelled())
-            ci.cancel();
+        } else if (Client33.EVENT_BUS.post(new PacketEvent.Receive(packet, (Connection) (Object) this)).isCancelled()) ci.cancel();
     }
 
     @Inject(method = "disconnect(Lnet/minecraft/network/chat/Component;)V", at = @At("HEAD"))
@@ -94,6 +102,10 @@ public abstract class ConnectionMixin {
     @Inject(method = "configureSerialization", at = @At("RETURN"))
     private static void onAddHandlers(ChannelPipeline pipeline, PacketFlow inboundDirection, boolean local, BandwidthDebugMonitor monitor, CallbackInfo ci) {
         if (inboundDirection != PacketFlow.CLIENTBOUND || local) return;
+        // Compression is inserted after the splitter, so this remains after decompression.
+        String inbound = pipeline.get("inbound_config") != null ? "inbound_config" : "decoder";
+        if (pipeline.get(inbound) != null && pipeline.get("client33-intel") == null)
+            pipeline.addBefore(inbound, "client33-intel", new RawPacketCapture());
 
         Proxy proxy = Proxies.get().getEnabled();
         if (proxy == null) return;

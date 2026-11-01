@@ -1,6 +1,7 @@
 package com.gaspoweredcake.client33.gui.widgets;
 
 import com.gaspoweredcake.client33.gui.renderer.GuiRenderer;
+import com.gaspoweredcake.client33.gui.themes.client33.Client33GuiTheme;
 import com.gaspoweredcake.client33.systems.modules.Modules;
 import com.gaspoweredcake.client33.systems.modules.render.CombatVisuals;
 import com.gaspoweredcake.client33.systems.modules.render.ESP;
@@ -19,15 +20,17 @@ public class WVisualPreview extends WWidget {
         ESP esp = Modules.get().get(ESP.class);
         CombatVisuals effects = Modules.get().get(CombatVisuals.class);
         Color primary = combat ? effects.primary.get() : esp.signatureAccent.get();
+        Color grid = theme instanceof Client33GuiTheme clientTheme ? clientTheme.previewGrid.get() : GRID;
+        Color body = theme instanceof Client33GuiTheme clientTheme ? clientTheme.previewBody.get() : BODY;
         double cx = x + width / 2, top = y + theme.scale(12), unit = theme.scale(0.9);
-        for (int i = 1; i < 6; i++) r.quad(x + width * i / 6, y + unit * 10, unit, height - unit * 20, GRID);
-        for (int i = 1; i < 5; i++) r.quad(x + unit * 8, y + height * i / 5, width - unit * 16, unit, GRID);
-        r.quad(cx - 10 * unit, top, 20 * unit, 20 * unit, BODY);
-        r.quad(cx - 15 * unit, top + 24 * unit, 30 * unit, 43 * unit, BODY);
-        r.quad(cx - 28 * unit, top + 25 * unit, 10 * unit, 43 * unit, BODY);
-        r.quad(cx + 18 * unit, top + 25 * unit, 10 * unit, 43 * unit, BODY);
-        r.quad(cx - 14 * unit, top + 70 * unit, 12 * unit, 37 * unit, BODY);
-        r.quad(cx + 2 * unit, top + 70 * unit, 12 * unit, 37 * unit, BODY);
+        for (int i = 1; i < 6; i++) r.quad(x + width * i / 6, y + unit * 10, unit, height - unit * 20, grid);
+        for (int i = 1; i < 5; i++) r.quad(x + unit * 8, y + height * i / 5, width - unit * 16, unit, grid);
+        r.quad(cx - 10 * unit, top, 20 * unit, 20 * unit, body);
+        r.quad(cx - 15 * unit, top + 24 * unit, 30 * unit, 43 * unit, body);
+        r.quad(cx - 28 * unit, top + 25 * unit, 10 * unit, 43 * unit, body);
+        r.quad(cx + 18 * unit, top + 25 * unit, 10 * unit, 43 * unit, body);
+        r.quad(cx - 14 * unit, top + 70 * unit, 12 * unit, 37 * unit, body);
+        r.quad(cx + 2 * unit, top + 70 * unit, 12 * unit, 37 * unit, body);
         double phase = combat ? time * effects.speed.get() : esp.animate.get() ? time : 0;
         if (combat || esp.mode.get() == ESP.Mode.Hologram || esp.mode.get() == ESP.Mode.Constellation) {
             if (combat ? effects.targetOrbit.get() : esp.groundMarker.get()) ellipse(r, cx, top + 108 * unit, 53 * unit, 12 * unit, phase, primary, true);

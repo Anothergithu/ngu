@@ -123,25 +123,9 @@ public class Blur extends Module {
     public Blur() {
         super(Categories.Render, "blur", "Blurs background when in GUI screens.");
 
-        // Initialize fbos for the first time
-        for (int i = 0; i < fbos.length; i++) {
-            fbos[i] = createFbo(i);
-        }
-
-        // The listeners need to run even when the module is not enabled
-        Client33.EVENT_BUS.subscribe(new ConsumerListener<>(ResolutionChangedEvent.class, event -> {
-            // Resize all fbos
-            for (int i = 0; i < fbos.length; i++) {
-                if (fbos[i] != null) {
-                    fbos[i].close();
-                }
-
-                fbos[i] = createFbo(i);
-            }
-
-            // Invalidate ubos
-            previousOffset = -1;
-        }));
+        // The listeners need to run even when the module is not enabled.
+        // Recreate lazily on the next blurred frame, avoiding GPU work for solid screens.
+        Client33.EVENT_BUS.subscribe(new ConsumerListener<>(ResolutionChangedEvent.class, event -> releaseFbos()));
 
         Client33.EVENT_BUS.subscribe(new ConsumerListener<>(RenderAfterWorldEvent.class, event -> onRenderAfterWorld()));
     }
@@ -149,10 +133,38 @@ public class Blur extends Module {
     private GpuTextureView createFbo(int i) {
         double scale = 1 / Math.pow(2, i);
 
-        int width = (int) (mc.getWindow().getWidth() * scale);
-        int height = (int) (mc.getWindow().getHeight() * scale);
+        int width = Math.max(1, (int) (mc.getWindow().getWidth() * scale));
+        int height = Math.max(1, (int) (mc.getWindow().getHeight() * scale));
 
-        return RenderSystem.getDevice().createTextureView(RenderSystem.getDevice().createTexture("Blur - " + i, 15, GpuFormat.RGBA8_UNORM, width, height, 1, 1));
+        var texture = RenderSystem.getDevice().createTexture("Blur - " + i, 15, GpuFormat.RGBA8_UNORM, width, height, 1, 1);
+        try {
+            return RenderSystem.getDevice().createTextureView(texture);
+        } catch (RuntimeException | Error failure) {
+            texture.close();
+            throw failure;
+        }
+    }
+
+    private void ensureFbos() {
+        if (fbos[0] != null) return;
+        try {
+            for (int i = 0; i < fbos.length; i++) fbos[i] = createFbo(i);
+        } catch (RuntimeException | Error failure) {
+            releaseFbos();
+            throw failure;
+        }
+    }
+
+    private void releaseFbos() {
+        for (int i = 0; i < fbos.length; i++) {
+            if (fbos[i] == null) continue;
+            var texture = fbos[i].texture();
+            fbos[i].close();
+            texture.close();
+            fbos[i] = null;
+        }
+        ubos = null;
+        previousOffset = -1;
     }
 
     private void onRenderAfterWorld() {
@@ -167,6 +179,7 @@ public class Blur extends Module {
                 if (time >= fadeEndAt) {
                     enabled = false;
                     fadeEndAt = -1;
+                    releaseFbos();
                 }
             }
         } else {
@@ -177,6 +190,7 @@ public class Blur extends Module {
         }
 
         if (!enabled) return;
+        ensureFbos();
 
         // Update progress
         double progress = 1;

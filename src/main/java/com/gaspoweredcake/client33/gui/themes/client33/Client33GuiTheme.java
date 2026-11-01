@@ -36,7 +36,6 @@ import com.mojang.blaze3d.platform.MacosUtil;
 import static com.gaspoweredcake.client33.Client33.mc;
 
 public class Client33GuiTheme extends GuiTheme {
-    private static final Color SCREEN_TINT = new Color(7, 7, 10, 200);
     private static final String SCREEN_MARK = "33";
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -123,6 +122,10 @@ public class Client33GuiTheme extends GuiTheme {
     );
 
     public final Setting<SettingColor> moduleBackground = color(sgBackgroundColors, "module-background", "Color of module background when active.", new SettingColor(78, 27, 39, 240));
+    public final Setting<SettingColor> panelBackground = color(sgBackgroundColors, "panel-background", "Color and opacity of workspace panels.", new SettingColor(20, 21, 28, 250));
+    public final Setting<SettingColor> screenTint = color(sgBackgroundColors, "screen-tint", "Color and opacity of the screen overlay.", new SettingColor(7, 7, 10, 200));
+    public final Setting<SettingColor> previewGrid = color(sgBackgroundColors, "preview-grid", "Color of the visual studio preview grid.", new SettingColor(38, 41, 49));
+    public final Setting<SettingColor> previewBody = color(sgBackgroundColors, "preview-body", "Color of the visual studio preview figure.", new SettingColor(66, 73, 87));
 
     // Outline
 
@@ -133,6 +136,8 @@ public class Client33GuiTheme extends GuiTheme {
             new SettingColor(151, 59, 75),
             new SettingColor(245, 66, 85)
     );
+
+    public final Setting<SettingColor> panelBorder = color(sgOutline, "panel-border", "Color and opacity of workspace panel borders.", new SettingColor(52, 53, 65, 255));
 
     // Separator
 
@@ -184,7 +189,7 @@ public class Client33GuiTheme extends GuiTheme {
 
     @Override
     public void renderBackground(GuiRenderer renderer, double width, double height) {
-        renderer.quad(0, 0, width, height, SCREEN_TINT);
+        renderer.quad(0, 0, width, height, screenTint.get());
 
         double line = scale(2);
         renderer.quad(0, 0, width, line, accentColor.get());

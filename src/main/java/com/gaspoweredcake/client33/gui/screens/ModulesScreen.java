@@ -46,8 +46,7 @@ public class ModulesScreen extends TabScreen {
     private WVerticalList navigation;
     private WLabel summary;
     private Category category;
-    private Filter filter = Filter.Studio;
-    private WHorizontalList categories;
+    private Filter filter = Filter.Home;
     private String query = "";
 
     public ModulesScreen(GuiTheme theme) {
@@ -56,37 +55,30 @@ public class ModulesScreen extends TabScreen {
 
     @Override
     public void initWidgets() {
-        WWindow window = add(theme.window("33   /   VISUAL STUDIO")).centerX().top().marginTop(54).widget();
-        window.padding = 12;
+        WWindow window = add(theme.window("33  /  WORKSPACE")).centerX().top().marginTop(46).widget();
+        window.padding = 10;
         window.view.spacing = 8;
-
-        categories = window.add(theme.horizontalList()).expandX().widget();
-        refreshCategories();
-        WHorizontalList toolbar = window.add(theme.horizontalList()).expandX().widget();
-        search = toolbar.add(theme.textBox(query, "Search modules or settings...")).minWidth(220).expandX().widget();
-        search.action = () -> {
-            query = search.get();
-            refreshResults();
-        };
-        toolbar.add(theme.button("Clear")).widget().action = () -> {
-            search.set("");
-            query = "";
-            search.setFocused(true);
-            refreshResults();
-        };
 
         WHorizontalList body = window.add(theme.horizontalList()).expandX().widget();
         body.spacing = 12;
         WView sidebar = body.add(theme.view()).top().widget();
-        sidebar.maxHeight = Math.max(theme.scale(90), getWindowHeight() - theme.scale(280));
-        navigation = sidebar.add(theme.verticalList()).minWidth(110).expandX().widget();
+        sidebar.maxHeight = Math.max(theme.scale(90), getWindowHeight() - theme.scale(210));
+        navigation = sidebar.add(theme.verticalList()).minWidth(125).expandX().widget();
+        navigation.spacing = 4;
         refreshNavigation();
 
         WVerticalList content = body.add(theme.verticalList()).top().expandX().widget();
-        summary = content.add(theme.label("")).widget();
-        results = content.add(theme.view()).minWidth(Math.max(260, Math.min(780, getWindowWidth() / theme.scale(1) - 220))).expandX().widget();
-        results.maxHeight = sidebar.maxHeight - theme.textHeight() - theme.scale(8);
-        results.spacing = 8;
+        content.spacing = 8;
+        WHorizontalList toolbar = content.add(theme.horizontalList()).expandX().widget();
+        search = toolbar.add(theme.textBox(query, "Search modules and settings  /  Ctrl+F")).minWidth(200).expandX().widget();
+        search.action = () -> { query = search.get(); refreshResults(); };
+        toolbar.add(theme.button("Clear")).widget().action = () -> {
+            search.set(""); query = ""; search.setFocused(true); refreshResults();
+        };
+        summary = content.add(theme.label("")).padTop(4).widget();
+        results = content.add(theme.view()).minWidth(Math.max(240, Math.min(760, getWindowWidth() / theme.scale(1) - 330))).expandX().widget();
+        results.maxHeight = Math.max(theme.scale(70), sidebar.maxHeight - theme.scale(58));
+        results.spacing = 10;
         refreshResults();
 
         if (theme.modulesHelpText()) {
@@ -97,8 +89,9 @@ public class ModulesScreen extends TabScreen {
 
     @Override
     protected void init() {
+        boolean alreadyBuilt = results != null;
         super.init();
-        refreshResults();
+        if (alreadyBuilt) refreshResults();
     }
 
     @Override
@@ -116,24 +109,20 @@ public class ModulesScreen extends TabScreen {
 
     private void refreshNavigation() {
         navigation.clear();
-        navigation.add(theme.label("LIBRARY").color(theme.textSecondaryColor()));
+        navigation.add(theme.label("33  /  MENU")).padBottom(7);
+        navigation.add(theme.label("WORKSPACE").color(theme.textSecondaryColor())).padTop(4);
         for (Filter value : Filter.values()) {
-            WButton button = navigation.add(theme.button((category == null && filter == value ? "> " : "") + value)).expandX().widget();
+            WButton button = navigation.add(theme.button((category == null && filter == value ? ">  " : "    ") + value)).expandX().widget();
             button.action = () -> select(null, value);
         }
-        navigation.add(theme.horizontalSeparator()).expandX();
-        navigation.add(theme.label("QUICK ACCESS").color(theme.textSecondaryColor()));
-        for (String name : new String[]{"esp", "combat-visuals", "kill-aura", "crystal-aura", "faction-intel", "movement-heatmap", "structure-esp"}) {
-            Module module = Modules.get().get(name);
-            if (module != null) navigation.add(theme.button(module.title)).expandX().widget().action = () -> mc.gui.setScreen(theme.moduleScreen(module));
-        }
-    }
-
-    private void refreshCategories() {
-        categories.clear();
-        categories.add(theme.button(category == null && filter == Filter.Studio ? "[ Studio ]" : "Studio")).expandX().widget().action = () -> select(null, Filter.Studio);
+        navigation.add(theme.label("CATEGORIES").color(theme.textSecondaryColor())).padTop(10);
         for (Category value : Modules.loopCategories()) {
-            categories.add(theme.button((category == value ? "[ " : "") + value.name + (category == value ? " ]" : ""))).expandX().widget().action = () -> select(value, Filter.All);
+            navigation.add(theme.button((category == value ? ">  " : "    ") + value.name)).expandX().widget().action = () -> select(value, Filter.All);
+        }
+        navigation.add(theme.label("QUICK ACCESS").color(theme.textSecondaryColor())).padTop(10);
+        for (String name : new String[]{"esp", "chams", "combat-visuals", "kill-aura", "crystal-aura", "faction-intel", "movement-heatmap", "structure-esp"}) {
+            Module module = Modules.get().get(name);
+            if (module != null) navigation.add(theme.button(module.title + "  >")).expandX().widget().action = () -> mc.gui.setScreen(theme.moduleScreen(module));
         }
     }
 
@@ -141,7 +130,6 @@ public class ModulesScreen extends TabScreen {
         this.category = category;
         this.filter = filter;
         refreshNavigation();
-        refreshCategories();
         refreshResults();
     }
 
@@ -149,6 +137,11 @@ public class ModulesScreen extends TabScreen {
         if (results == null) return;
         results.clear();
         String text = query.strip().toLowerCase(Locale.ROOT);
+        if (filter == Filter.Home && category == null && text.isEmpty()) {
+            summary.set("OVERVIEW  /  Your workspace");
+            buildHome();
+            return;
+        }
         if (filter == Filter.Studio && category == null && text.isEmpty()) {
             summary.set("VISUAL STUDIO  /  Build your signature");
             buildStudio();
@@ -178,7 +171,8 @@ public class ModulesScreen extends TabScreen {
         int index = 0;
         for (Module module : modules) {
             WPanel panel = grid.add(new WPanel()).expandX().top().widget();
-            panel.add(theme.module(module)).expandX().pad(7);
+            panel.add(theme.label(module.category.name.toUpperCase(Locale.ROOT)).color(theme.textSecondaryColor())).padHorizontal(12).padTop(10);
+            panel.add(theme.module(module)).expandX().padHorizontal(7).padTop(3);
             panel.add(theme.label(module.description, 290)).padHorizontal(12).padBottom(5);
             WHorizontalList row = panel.add(theme.horizontalList()).expandX().pad(8).widget();
             WFavorite favorite = row.add(theme.favorite(module.favorite)).widget();
@@ -192,6 +186,44 @@ public class ModulesScreen extends TabScreen {
         }
     }
 
+    private void buildHome() {
+        var visible = Modules.get().getAll().stream().filter(module -> !Config.get().hiddenModules.get().contains(module)).toList();
+        long enabled = visible.stream().filter(Module::isActive).count();
+        long favorites = visible.stream().filter(module -> module.favorite).count();
+        WPanel welcome = results.add(new WPanel()).expandX().widget();
+        welcome.add(theme.label("YOUR CLIENT, AT A GLANCE")).padHorizontal(16).padTop(15);
+        welcome.add(theme.label("Find your tools, tune your visuals and get back in game.", 550).color(theme.textSecondaryColor())).padHorizontal(16).padVertical(8);
+        WHorizontalList actions = welcome.add(theme.horizontalList()).expandX().padHorizontal(16).padBottom(14).widget();
+        actions.add(theme.button("Browse modules  >")).expandX().widget().action = () -> select(null, Filter.All);
+        actions.add(theme.button("Visual studio  >")).expandX().widget().action = () -> select(null, Filter.Studio);
+
+        WTable stats = results.add(theme.table()).expandX().widget();
+        stats.horizontalSpacing = 10;
+        WPanel library = stats.add(new WPanel()).expandX().widget();
+        library.add(theme.label("LIBRARY").color(theme.textSecondaryColor())).padHorizontal(12).padTop(12);
+        library.add(theme.label(visible.size() + " modules")).padHorizontal(12).padVertical(8);
+        library.add(theme.button("Explore")).expandX().padHorizontal(12).padBottom(12).widget().action = () -> select(null, Filter.All);
+        if (getWindowWidth() / theme.scale(1) < 700) stats.row();
+        WPanel active = stats.add(new WPanel()).expandX().widget();
+        active.add(theme.label("ACTIVE").color(theme.textSecondaryColor())).padHorizontal(12).padTop(12);
+        active.add(theme.label(enabled + " enabled")).padHorizontal(12).padVertical(8);
+        active.add(theme.button("Manage")).expandX().padHorizontal(12).padBottom(12).widget().action = () -> select(null, Filter.Enabled);
+        if (getWindowWidth() / theme.scale(1) < 700) stats.row();
+        WPanel starred = stats.add(new WPanel()).expandX().widget();
+        starred.add(theme.label("SAVED").color(theme.textSecondaryColor())).padHorizontal(12).padTop(12);
+        starred.add(theme.label(favorites + " favorites")).padHorizontal(12).padVertical(8);
+        starred.add(theme.button("Open")).expandX().padHorizontal(12).padBottom(12).widget().action = () -> select(null, Filter.Favorites);
+
+        WPanel shortcuts = results.add(new WPanel()).expandX().widget();
+        shortcuts.add(theme.label("QUICK CONTROLS")).padHorizontal(14).padTop(12);
+        shortcuts.add(theme.label("Click to toggle / right-click to configure", 450).color(theme.textSecondaryColor())).padHorizontal(14).padBottom(6);
+        for (String name : new String[]{"esp", "chams", "combat-visuals", "kill-aura"}) {
+            Module module = Modules.get().get(name);
+            if (module != null && !Config.get().hiddenModules.get().contains(module)) shortcuts.add(theme.module(module)).expandX().padHorizontal(10);
+        }
+        shortcuts.add(theme.label(" ")).padBottom(4);
+    }
+
     private void buildStudio() {
         ESP esp = Modules.get().get(ESP.class);
         CombatVisuals combat = Modules.get().get(CombatVisuals.class);
@@ -200,11 +232,33 @@ public class ModulesScreen extends TabScreen {
         grid.verticalSpacing = 12;
         boolean wide = getWindowWidth() / theme.scale(1) >= 950;
         WPanel entity = studioCard(grid, esp, "01 / ENTITY SIGNATURE", false);
+        entity.add(theme.label("ESP MODE").color(theme.textSecondaryColor())).padHorizontal(12).padBottom(4);
         WDropdown<ESP.Mode> mode = entity.add(theme.dropdown(esp.mode.get())).expandX().padHorizontal(12).widget();
-        mode.action = () -> esp.mode.set(mode.get());
-        toggle(entity, "Animated scans", esp.animate);
-        toggle(entity, "Ground markers", esp.groundMarker);
-        toggle(entity, "Target tether", esp.tether);
+        mode.action = () -> {
+            esp.mode.set(mode.get());
+            taskAfterRender = this::refreshResults;
+        };
+        boolean signature = esp.mode.get() == ESP.Mode.Hologram || esp.mode.get() == ESP.Mode.Constellation;
+        boolean screen = esp.mode.get() == ESP.Mode._2D || esp.mode.get() == ESP.Mode.Telemetry;
+        if (signature || esp.mode.get() == ESP.Mode.Telemetry) toggle(entity, "Animated scans", esp.animate);
+        if (signature) {
+            toggle(entity, "Ground markers", esp.groundMarker);
+            toggle(entity, "Through walls", esp.throughWalls);
+            toggle(entity, "Target tether", esp.tether);
+        }
+        if (screen) {
+            entity.add(theme.label("NAMES").color(theme.textSecondaryColor())).padHorizontal(12).padTop(4);
+            WDropdown<ESP.NameLabel> names = entity.add(theme.dropdown(esp.nameLabel.get())).expandX().padHorizontal(12).widget();
+            names.action = () -> esp.nameLabel.set(names.get());
+            toggle(entity, "Health bars", esp.healthBar);
+            toggle(entity, "Armor bars", esp.armorBar);
+            toggle(entity, "Health labels", esp.healthLabel);
+            toggle(entity, "Distance labels", esp.distanceLabel);
+        }
+        toggle(entity, "Ignore friends", esp.ignoreFriends);
+        toggle(entity, "Ignore invisible", esp.ignoreInvisible);
+        Module tracers = Modules.get().get("tracers");
+        if (tracers != null) entity.add(theme.button("Tracer & offscreen settings")).expandX().padHorizontal(12).padTop(8).widget().action = () -> mc.gui.setScreen(theme.moduleScreen(tracers));
         entity.add(theme.button("All ESP settings")).expandX().pad(12).widget().action = () -> mc.gui.setScreen(theme.moduleScreen(esp));
         if (!wide) grid.row();
         WPanel effects = studioCard(grid, combat, "02 / COMBAT CHOREOGRAPHY", true);
@@ -292,7 +346,7 @@ public class ModulesScreen extends TabScreen {
 
     @EventHandler
     private void onActiveModulesChanged(ActiveModulesChangedEvent event) {
-        if (filter == Filter.Enabled) taskAfterRender = this::refreshResults;
+        if (filter == Filter.Enabled || filter == Filter.Home) taskAfterRender = this::refreshResults;
     }
 
     @Override
@@ -319,5 +373,5 @@ public class ModulesScreen extends TabScreen {
         return imported;
     }
 
-    private enum Filter { Studio, All, Favorites, Enabled }
+    private enum Filter { Home, Studio, All, Favorites, Enabled }
 }

@@ -30,6 +30,22 @@ public class Config extends System<Config> {
     private final SettingGroup sgModules = settings.createGroup("Modules");
     private final SettingGroup sgChat = settings.createGroup("Chat");
     private final SettingGroup sgMisc = settings.createGroup("Misc");
+    private final SettingGroup sgIntel = settings.createGroup("Data Acquisition");
+
+    public final Setting<Boolean> rawPacketCapture = sgIntel.add(new BoolSetting.Builder()
+        .name("capture-raw-packets").description("Capture bounded clientbound packet metadata and prefixes for this session.")
+        .defaultValue(true).onChanged(com.gaspoweredcake.client33.utils.intel.RawPacketCapture::setEnabled).build());
+    public final Setting<Integer> rawPacketPrefix = sgIntel.add(new IntSetting.Builder()
+        .name("raw-packet-prefix-bytes").description("Bytes retained from each clientbound packet in memory.")
+        .defaultValue(32).range(0, 256).sliderRange(0, 256)
+        .onChanged(com.gaspoweredcake.client33.utils.intel.RawPacketCapture::setPrefixBytes).build());
+    public final Setting<Boolean> persistBlockEntityNbt = sgIntel.add(new BoolSetting.Builder()
+        .name("persist-block-entity-nbt").description("Save received block entity NBT in the local SQLite cache.")
+        .defaultValue(true).onChanged(com.gaspoweredcake.client33.utils.intel.IntelBus::setBlockEntityPersistence).build());
+    public final Setting<Integer> intelSectionBudget = sgIntel.add(new IntSetting.Builder()
+        .name("sections-per-tick").description("Maximum section snapshots captured per tick for the intelligence cache.")
+        .defaultValue(2).range(1, 32).sliderRange(1, 16)
+        .onChanged(com.gaspoweredcake.client33.utils.intel.IntelBus::setSectionBudget).build());
 
     // Visual
 

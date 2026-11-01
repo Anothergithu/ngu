@@ -22,6 +22,7 @@ import com.gaspoweredcake.client33.utils.entity.EntityUtils;
 import com.gaspoweredcake.client33.utils.player.PlayerUtils;
 import com.gaspoweredcake.client33.utils.render.NametagUtils;
 import com.gaspoweredcake.client33.utils.render.ScreenBounds;
+import com.gaspoweredcake.client33.utils.render.EspLabels;
 import com.gaspoweredcake.client33.renderer.text.TextRenderer;
 import com.gaspoweredcake.client33.utils.render.WireframeEntityRenderer;
 import com.gaspoweredcake.client33.utils.render.color.Color;
@@ -37,6 +38,10 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import org.joml.Vector3d;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.PriorityQueue;
 import java.util.Set;
 
 public class ESP extends Module {
@@ -47,7 +52,7 @@ public class ESP extends Module {
     public final Setting<Boolean> groundMarker = sgSignature.add(new BoolSetting.Builder().name("ground-marker").description("Draw a segmented footprint under signature ESP.").defaultValue(true).build());
     public final Setting<Boolean> tether = sgSignature.add(new BoolSetting.Builder().name("target-tether").description("Connect your player to KillAura's selected target in signature modes.").defaultValue(false).build());
     public final Setting<Integer> detail = sgSignature.add(new IntSetting.Builder().name("signature-detail").description("Geometry segments per entity.").defaultValue(32).range(12, 64).sliderRange(12, 64).build());
-    public final Setting<Integer> entityBudget = sgSignature.add(new IntSetting.Builder().name("signature-budget").description("Maximum entities drawn per frame in signature modes.").defaultValue(64).range(1, 256).sliderRange(1, 256).build());
+    public final Setting<Integer> entityBudget = sgSignature.add(new IntSetting.Builder().name("signature-budget").description("Maximum entities drawn per frame in Hologram and Constellation modes. Targets and nearby entities are prioritized.").defaultValue(64).range(1, 256).sliderRange(1, 256).build());
     public final Setting<SettingColor> signatureAccent = sgSignature.add(new ColorSetting.Builder().name("signature-accent").description("Secondary scan and telemetry color.").defaultValue(new SettingColor(92, 220, 255, 200)).build());
     private final SettingGroup sgColors = settings.createGroup("Colors");
 
@@ -145,6 +150,20 @@ public class ESP extends Module {
         .build()
     );
 
+    public final Setting<Boolean> ignoreFriends = sgGeneral.add(new BoolSetting.Builder()
+        .name("ignore-friends")
+        .description("Exclude friends from ESP, including highlighted targets.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> ignoreInvisible = sgGeneral.add(new BoolSetting.Builder()
+        .name("ignore-invisible")
+        .description("Exclude invisible entities from ESP, including highlighted targets.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Double> maxDistance = sgGeneral.add(new DoubleSetting.Builder()
         .name("max-distance")
         .description("Maximum distance from the camera for all ESP modes.")
@@ -154,7 +173,7 @@ public class ESP extends Module {
         .build()
     );
 
-    private final Setting<Boolean> healthBar = sgGeneral.add(new BoolSetting.Builder()
+    public final Setting<Boolean> healthBar = sgGeneral.add(new BoolSetting.Builder()
         .name("health-bar")
         .description("Shows a health bar beside living entities in 2D mode.")
         .defaultValue(true)
@@ -162,11 +181,35 @@ public class ESP extends Module {
         .build()
     );
 
-    private final Setting<Boolean> distanceLabel = sgGeneral.add(new BoolSetting.Builder()
+    public final Setting<Boolean> distanceLabel = sgGeneral.add(new BoolSetting.Builder()
         .name("distance-label")
         .description("Shows the distance below each 2D box.")
         .defaultValue(true)
         .visible(() -> isScreenMode())
+        .build()
+    );
+
+    public final Setting<NameLabel> nameLabel = sgGeneral.add(new EnumSetting.Builder<NameLabel>()
+        .name("name-label")
+        .description("Show entity names. Auto preserves the default Telemetry label.")
+        .defaultValue(NameLabel.Auto)
+        .visible(this::isScreenMode)
+        .build()
+    );
+
+    public final Setting<Boolean> healthLabel = sgGeneral.add(new BoolSetting.Builder()
+        .name("health-label")
+        .description("Show current health for living entities in screen modes.")
+        .defaultValue(false)
+        .visible(this::isScreenMode)
+        .build()
+    );
+
+    public final Setting<Boolean> armorBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("armor-bar")
+        .description("Show armor points beside living entities in screen modes.")
+        .defaultValue(false)
+        .visible(this::isScreenMode)
         .build()
     );
 
@@ -265,6 +308,7 @@ public class ESP extends Module {
 
     private final ScreenBounds bounds = new ScreenBounds();
     private final Color healthColor = new Color();
+    private final Color armorColor = new Color(100, 180, 255, 255);
     private final Color healthBackground = new Color(8, 12, 20, 190);
     private final Vector3d pos = new Vector3d();
 
@@ -282,15 +326,44 @@ public class ESP extends Module {
 
         count = 0;
 
+        boolean signature = mode.get() == Mode.Hologram || mode.get() == Mode.Constellation;
+        if (signature) {
+            // Retain only the best candidates instead of sorting every eligible entity.
+            Comparator<SignatureCandidate> order = Comparator.comparing((SignatureCandidate candidate) -> !candidate.target())
+                .thenComparingDouble(SignatureCandidate::distanceSquared)
+                .thenComparingInt(candidate -> candidate.entity().getId());
+            int limit = entityBudget.get();
+            PriorityQueue<SignatureCandidate> candidates = new PriorityQueue<>(limit, order.reversed());
+            for (Entity entity : mc.level.entitiesForRendering()) {
+                if (getColor(entity) == null) continue;
+                SignatureCandidate candidate = new SignatureCandidate(entity, drawAsTarget(entity),
+                    PlayerUtils.squaredDistanceToCamera(entity.getX(), entity.getY(), entity.getZ()));
+                if (candidates.size() < limit) candidates.add(candidate);
+                else if (order.compare(candidate, candidates.peek()) < 0) {
+                    candidates.poll();
+                    candidates.add(candidate);
+                }
+            }
+            List<SignatureCandidate> ordered = new ArrayList<>(candidates);
+            ordered.sort(order);
+            for (SignatureCandidate candidate : ordered) {
+                Entity entity = candidate.entity();
+                drawSignature(event, entity);
+                if (candidate.target() && targetHitbox.get()) drawBoundingBox(event, entity);
+                count++;
+            }
+            return;
+        }
+
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (shouldSkip(entity) || getColor(entity) == null) continue;
-            if ((mode.get() == Mode.Hologram || mode.get() == Mode.Constellation) && count >= entityBudget.get()) break;
-            if (mode.get() == Mode.Hologram || mode.get() == Mode.Constellation) drawSignature(event, entity);
             if ((drawAsTarget(entity) && targetHitbox.get()) || mode.get() == Mode.Box || mode.get() == Mode.Wireframe)
                 drawBoundingBox(event, entity);
             count++;
         }
     }
+
+    private record SignatureCandidate(Entity entity, boolean target, double distanceSquared) {}
 
     private void drawBoundingBox(Render3DEvent event, Entity entity) {
         Color color = getColor(entity);
@@ -326,7 +399,8 @@ public class ESP extends Module {
 
         Renderer2D.COLOR.begin();
         TextRenderer text = TextRenderer.get();
-        if (distanceLabel.get()) text.begin(event.graphics, 0.8);
+        boolean labelsEnabled = distanceLabel.get() || healthLabel.get() || nameLabel.get() == NameLabel.Always;
+        if (labelsEnabled) text.begin(event.graphics, 0.8);
         count = 0;
 
         for (Entity entity : mc.level.entitiesForRendering()) {
@@ -383,19 +457,33 @@ public class ESP extends Module {
                 Renderer2D.COLOR.quad(bounds.left - 6, bounds.top, 3, height, healthBackground);
                 Renderer2D.COLOR.quad(bounds.left - 6, bounds.bottom - height * fraction, 3, height * fraction, healthColor);
             }
-            if (distanceLabel.get()) {
-                String label = (mode.get() == Mode.Telemetry ? entity.getName().getString() + " / " : "") + Math.round(Math.sqrt(PlayerUtils.squaredDistanceToCamera(entity.getX(), entity.getY(), entity.getZ()))) + " m";
-                double labelX = Mth.clamp((bounds.left + bounds.right - text.getWidth(label)) / 2, 0,
-                    Math.max(0, mc.getWindow().getWidth() - text.getWidth(label)));
-                double labelY = Math.min(bounds.bottom + 3, mc.getWindow().getHeight() - text.getHeight());
-                text.render(label, labelX, labelY, lineColor, true);
+            if (armorBar.get() && entity instanceof LivingEntity living && living.getArmorValue() > 0) {
+                double fraction = Mth.clamp(living.getArmorValue() / 20.0, 0, 1);
+                healthBackground.a(lineColor.a * 3 / 4);
+                armorColor.a(lineColor.a);
+                double barX = mode.get() == Mode.Telemetry ? bounds.right + 12 : bounds.right + 3;
+                Renderer2D.COLOR.quad(barX, bounds.top, 3, height, healthBackground);
+                Renderer2D.COLOR.quad(barX, bounds.bottom - height * fraction, 3, height * fraction, armorColor);
+            }
+            if (labelsEnabled) {
+                boolean showName = nameLabel.get() == NameLabel.Always
+                    || (nameLabel.get() == NameLabel.Auto && mode.get() == Mode.Telemetry && distanceLabel.get());
+                String label = EspLabels.format(showName ? entity.getName().getString() : null,
+                    distanceLabel.get() ? Math.round(Math.sqrt(PlayerUtils.squaredDistanceToCamera(entity.getX(), entity.getY(), entity.getZ()))) : null,
+                    healthLabel.get() && entity instanceof LivingEntity living ? living.getHealth() : null);
+                if (!label.isEmpty()) {
+                    double labelX = Mth.clamp((bounds.left + bounds.right - text.getWidth(label)) / 2, 0,
+                        Math.max(0, mc.getWindow().getWidth() - text.getWidth(label)));
+                    double labelY = Math.max(0, Math.min(bounds.bottom + 3, mc.getWindow().getHeight() - text.getHeight()));
+                    text.render(label, labelX, labelY, lineColor, true);
+                }
             }
 
             count++;
         }
 
         Renderer2D.COLOR.render();
-        if (distanceLabel.get()) text.end();
+        if (labelsEnabled) text.end();
     }
 
     public boolean forceRender() {
@@ -428,6 +516,8 @@ public class ESP extends Module {
 
     public boolean shouldSkip(Entity entity) {
         if (!entity.isAlive() || entity.isRemoved()) return true;
+        if (ignoreInvisible.get() && entity.isInvisible()) return true;
+        if (ignoreFriends.get() && entity instanceof Player player && Friends.get().isFriend(player)) return true;
         if (!drawAsTarget(entity) && !entities.get().contains(entity.getType())) return true;
         if (entity == mc.player && ignoreSelf.get()) return true;
         if (entity == mc.getCameraEntity() && mc.options.getCameraType().isFirstPerson()) return true;
@@ -501,6 +591,8 @@ public class ESP extends Module {
     public boolean isGlow() {
         return isActive() && mode.get() == Mode.Glow;
     }
+
+    public enum NameLabel { Auto, Always, Off }
 
     public enum ESPColorMode {
         EntityType,

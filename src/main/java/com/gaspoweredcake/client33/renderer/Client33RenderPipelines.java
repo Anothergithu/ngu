@@ -170,6 +170,22 @@ public abstract class Client33RenderPipelines {
         .build()
     );
 
+    public static final RenderPipeline POST_FRACTURE = add(new ExtendedRenderPipelineBuilder()
+        .withLocation(Client33.identifier("pipeline/post/fracture"))
+        .withVertexBinding(0, Client33VertexFormats.POS2).withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+        .withVertexShader(Client33.identifier("shaders/post-process/base.vert"))
+        .withFragmentShader(Client33.identifier("shaders/post-process/fracture.frag"))
+        .withBindGroupLayout(BindGroupLayout.builder()
+            .withSampler("u_Texture")
+            .withUniform("PostData", UniformType.UNIFORM_BUFFER)
+            .withUniform("FractureData", UniformType.UNIFORM_BUFFER)
+            .build())
+        .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false))
+        .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
+        .withCull(false)
+        .build()
+    );
+
     // Blur
 
     public static final RenderPipeline BLUR_DOWN = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)

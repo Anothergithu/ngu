@@ -15,6 +15,7 @@ import com.gaspoweredcake.client33.utils.misc.ListMode;
 import com.gaspoweredcake.client33.utils.player.FindItemResult;
 import com.gaspoweredcake.client33.utils.player.InvUtils;
 import com.gaspoweredcake.client33.utils.player.PlayerUtils;
+import com.gaspoweredcake.client33.utils.player.Rotations;
 import com.gaspoweredcake.client33.utils.render.RenderUtils;
 import com.gaspoweredcake.client33.utils.render.color.SettingColor;
 import com.gaspoweredcake.client33.utils.world.BlockUtils;
@@ -183,14 +184,19 @@ public class Scaffold extends Module {
     );
 
     private final BlockPos.MutableBlockPos bp = new BlockPos.MutableBlockPos();
+    private long placementGeneration;
 
     public Scaffold() {
         super(Categories.Movement, "scaffold", "Automatically places blocks under you.");
     }
 
 
+    @Override
+    public void onDeactivate() { placementGeneration++; }
+
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        placementGeneration++;
         if (!Utils.canUpdate()) return;
         if (onlyOnClick.get() && !mc.options.keyUse.isDown()) return;
 
@@ -218,9 +224,10 @@ public class Scaffold extends Module {
         BlockPos targetBlock = bp.immutable();
 
         if (!airPlace.get() && BlockUtils.getPlaceSide(bp) == null) {
-            double searchRange = placeRange.get();
             Vec3 eye = mc.player.getEyePosition();
             double reach = mc.player.blockInteractionRange();
+            // Any reachable face is within this conservative cube around the feet.
+            double searchRange = Math.min(placeRange.get(), reach + mc.player.getEyeHeight(mc.player.getPose()) + 2);
             double reachSq = reach * reach;
             BlockPos best = null;
             double bestDistance = Double.MAX_VALUE;
@@ -280,7 +287,7 @@ public class Scaffold extends Module {
             place(bp);
         }
 
-        FindItemResult result = InvUtils.findInHotbar(itemStack -> validItem(itemStack, bp));
+        FindItemResult result = InvUtils.findInHotbar(itemStack -> validItem(itemStack, mc.player.blockPosition().below()));
         if (fastTower.get() && mc.options.keyJump.isDown() && !mc.options.keyShift.isDown()
             && (whileMoving.get() || !PlayerUtils.isMoving()) && result.found()
             && (autoSwitch.get() || result.getHand() != null) && hasTowerSupport()) {
@@ -300,7 +307,7 @@ public class Scaffold extends Module {
 
     public boolean towering() {
         if (!Utils.canUpdate()) return false;
-        FindItemResult result = InvUtils.findInHotbar(itemStack -> validItem(itemStack, bp));
+        FindItemResult result = InvUtils.findInHotbar(itemStack -> validItem(itemStack, mc.player.blockPosition().below()));
         return scaffolding() && fastTower.get() && mc.options.keyJump.isDown() && !mc.options.keyShift.isDown() &&
             (whileMoving.get() || !PlayerUtils.isMoving()) && result.found() && (autoSwitch.get() || result.getHand() != null) && hasTowerSupport();
     }
@@ -319,22 +326,39 @@ public class Scaffold extends Module {
         if (!blocksFilter.get().allows(blocks.get().contains(block))) return false;
 
         if (!Block.isShapeFullBlock(block.defaultBlockState().getCollisionShape(mc.level, pos))) return false;
-        return !(block instanceof FallingBlock) || !FallingBlock.isFree(mc.level.getBlockState(pos));
+        return !(block instanceof FallingBlock) || !FallingBlock.isFree(mc.level.getBlockState(pos.below()));
     }
 
-    private boolean place(BlockPos bp) {
-        FindItemResult item = InvUtils.findInHotbar(itemStack -> validItem(itemStack, bp));
-        if (!item.found()) return false;
+    private boolean place(BlockPos pos) {
+        BlockPos target = pos.immutable();
+        FindItemResult item = InvUtils.findInHotbar(stack -> validItem(stack, target));
+        if (!item.found() || (item.getHand() == null && !autoSwitch.get())) return false;
+        if (!BlockUtils.canPlace(target)) return false;
+        Direction side = BlockUtils.getPlaceSide(target);
+        if (side == null && !airPlace.get()) return false;
 
-        if (item.getHand() == null && !autoSwitch.get()) return false;
-
-        if (BlockUtils.place(bp, item, rotate.get(), 50, renderSwing.get(), true)) {
-            // Render block if was placed
-            if (render.get())
-                RenderUtils.renderTickingBlock(bp.immutable(), sideColor.get(), lineColor.get(), shapeMode.get(), 0, 8, true, false);
-            return true;
-        }
-        return false;
+        var owner = mc.player;
+        var world = mc.level;
+        int selected = owner.getInventory().getSelectedSlot();
+        int itemSlot = item.slot();
+        ItemStack expected = (item.isOffhand() ? owner.getOffhandItem() : owner.getInventory().getItem(itemSlot)).copy();
+        long generation = placementGeneration;
+        Vec3 hit = Vec3.atCenterOf(target);
+        if (side != null) hit = hit.add(side.getStepX() * 0.5, side.getStepY() * 0.5, side.getStepZ() * 0.5);
+        Runnable placement = () -> {
+            if (!isActive() || generation != placementGeneration || mc.player != owner || mc.level != world
+                || mc.gameMode == null || !owner.isAlive() || (onlyOnClick.get() && !mc.options.keyUse.isDown())
+                || owner.getInventory().getSelectedSlot() != selected) return;
+            ItemStack current = item.isOffhand() ? owner.getOffhandItem() : owner.getInventory().getItem(itemSlot);
+            if (current.isEmpty() || !ItemStack.isSameItemSameComponents(expected, current) || !validItem(current, target)
+                || !BlockUtils.canPlace(target) || BlockUtils.getPlaceSide(target) != side
+                || (side == null && !airPlace.get())) return;
+            if (BlockUtils.place(target, item, false, 50, renderSwing.get(), true) && render.get())
+                RenderUtils.renderTickingBlock(target, sideColor.get(), lineColor.get(), shapeMode.get(), 0, 8, true, false);
+        };
+        if (rotate.get()) Rotations.rotate(Rotations.getYaw(hit), Rotations.getPitch(hit), 50, placement);
+        else placement.run();
+        return true;
     }
 
 }

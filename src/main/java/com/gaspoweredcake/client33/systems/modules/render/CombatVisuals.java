@@ -126,11 +126,15 @@ public class CombatVisuals extends Module {
             double radius = (0.2 + p * 1.8) * size.get();
             VisualGeometry.ring(renderer, at.x, at.y, at.z, radius, 0, Math.PI * 2, detail.get(), color);
             VisualGeometry.band(renderer, at.x, at.y, at.z, radius, 0.22 * (1 - p), detail.get(), color);
-            if (sparks.get()) for (int i = 0; i < 10; i++) {
-                double angle = i * Math.PI / 5;
-                double y = at.y + Math.sin(p * Math.PI) * (0.5 + (i % 3) * 0.2);
-                renderer.line(at.x + Math.cos(angle) * radius, y, at.z + Math.sin(angle) * radius,
-                    at.x + Math.cos(angle) * (radius + 0.16), y + 0.15 * (1 - p), at.z + Math.sin(angle) * (radius + 0.16), color);
+            if (sparks.get()) {
+                double heightWave = Math.sin(p * Math.PI);
+                for (int i = 0; i < 10; i++) {
+                    double angle = i * Math.PI / 5;
+                    double cosine = Math.cos(angle), sine = Math.sin(angle);
+                    double y = at.y + heightWave * (0.5 + (i % 3) * 0.2);
+                    renderer.line(at.x + cosine * radius, y, at.z + sine * radius,
+                        at.x + cosine * (radius + 0.16), y + 0.15 * (1 - p), at.z + sine * (radius + 0.16), color);
+                }
             }
         }
         if (trails.get() && !mc.options.getCameraType().isFirstPerson()) {
